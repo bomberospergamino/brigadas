@@ -1,0 +1,1184 @@
+const ADMIN_PASSWORD = '1105';
+const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
+const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
+const GOOGLE_SHEET_NAMES = [
+  'CONFIG_BRIGADAS',
+  'PERSONAL',
+  'ENCUENTROS',
+  'ASISTENCIAS',
+  'DETALLE_ASISTENCIAS',
+  'EQUIPAMIENTO',
+  'CHECK_EQUIPAMIENTO',
+  'DETALLE_CHECK_EQUIPAMIENTO',
+  'NECESIDADES',
+  'HISTORIAL_ACCIONES',
+  'PARAMETROS',
+];
+const VALID_MEETING_STATES = new Set(['programado', 'realizado', 'reprogramado']);
+const BRIGADES_FALLBACK = [
+  { id_brigada: 'rescate_acuatico', nombre_brigada: 'Rescate acuatico', columna_personal: 'rescate_acuatico', logo_file: 'rescateacuatico_logo.jpeg', color: '#0077B6', activa: 'SI', orden: 1 },
+  { id_brigada: 'buceo', nombre_brigada: 'Buceo', columna_personal: 'buceo', logo_file: 'buceo_logo.jpeg', color: '#003566', activa: 'SI', orden: 2 },
+  { id_brigada: 'k9', nombre_brigada: 'K9', columna_personal: 'k9', logo_file: 'k9_logo.jpeg', color: '#D00000', activa: 'SI', orden: 3 },
+  { id_brigada: 'mat_pel', nombre_brigada: 'Mat Pel', columna_personal: 'mat_pel', logo_file: 'matpel_logo.jpeg', color: '#70E000', activa: 'SI', orden: 4 },
+  { id_brigada: 'altura', nombre_brigada: 'Altura', columna_personal: 'altura', logo_file: 'altura_logo.jpeg', color: '#B5179E', activa: 'SI', orden: 5 },
+  { id_brigada: 'socorrismo', nombre_brigada: 'Socorrismo', columna_personal: 'socorrismo', logo_file: 'socorrismo_logo.jpeg', color: '#E85D04', activa: 'SI', orden: 6 },
+  { id_brigada: 'brec', nombre_brigada: 'BREC', columna_personal: 'brec', logo_file: 'brec_logo.jpeg', color: '#6C584C', activa: 'SI', orden: 7 },
+];
+
+const state = {
+  sheets: {},
+  selectedBrigade: 'rescate_acuatico',
+  calendarDate: new Date(),
+  adminMonth: monthKey(new Date()),
+  currentFileName: '',
+  localMeetings: [],
+  editingEventId: '',
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  bindEvents();
+  renderAll();
+  loadGoogleSheet();
+});
+
+function bindEvents() {
+  document.getElementById('workbookInput').addEventListener('change', handleWorkbookUpload);
+  document.getElementById('reloadSheetButton').addEventListener('click', loadGoogleSheet);
+  document.querySelectorAll('.nav-button').forEach((button) => button.addEventListener('click', () => openView(button.dataset.view)));
+  document.querySelectorAll('[data-view-jump]').forEach((button) => button.addEventListener('click', () => openView(button.dataset.viewJump)));
+  document.getElementById('adminButton').addEventListener('click', requestAdminAccess);
+  document.getElementById('adminForm').addEventListener('submit', handleAdminSubmit);
+  document.getElementById('backToBrigadesButton').addEventListener('click', closeBrigadeDetail);
+  document.getElementById('prevMonthButton').addEventListener('click', () => changeMonth(-1));
+  document.getElementById('nextMonthButton').addEventListener('click', () => changeMonth(1));
+  document.getElementById('todayButton').addEventListener('click', () => {
+    state.calendarDate = new Date();
+    renderCalendar();
+  });
+  document.getElementById('downloadCalendarButton').addEventListener('click', exportarCalendarioPNG);
+  document.getElementById('printCalendarButton').addEventListener('click', () => window.print());
+  document.getElementById('scheduleMeetingButton').addEventListener('click', () => openScheduleDialog());
+  document.getElementById('homeScheduleButton').addEventListener('click', () => openScheduleDialog());
+  document.getElementById('adminNewEventButton').addEventListener('click', () => openScheduleDialog());
+  document.getElementById('scheduleForm').addEventListener('submit', handleScheduleSubmit);
+  document.getElementById('membersDownloadButton').addEventListener('click', descargarIntegrantesBrigada);
+  document.getElementById('downloadLogoButton').addEventListener('click', descargarLogoBrigada);
+  document.getElementById('saveAttendanceButton').addEventListener('click', () => generarPDFAsistencia(true));
+  document.getElementById('saveEquipmentCheckButton').addEventListener('click', generarPDFCheckEquipamiento);
+  document.getElementById('sendCertificateButton').addEventListener('click', enviarCertificado);
+  document.querySelectorAll('[data-brigade-panel]').forEach((button) => {
+    button.addEventListener('click', () => openBrigadePanel(button.dataset.brigadePanel));
+  });
+  document.getElementById('exportCsvButton').addEventListener('click', exportAdminCsv);
+  document.getElementById('exportAdminPdfButton').addEventListener('click', exportAdminPdf);
+  ['adminMonth', 'adminBrigadeFilter', 'adminStateFilter', 'onlyMissingFilter', 'onlyHighFilter'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', renderAdmin);
+  });
+}
+
+async function handleWorkbookUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+    state.sheets = {};
+    workbook.SheetNames.forEach((name) => {
+      state.sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: '', raw: false });
+    });
+    state.currentFileName = file.name;
+    validateRequiredSheets();
+    setDataStatus(`Excel cargado: ${file.name}`);
+    renderAll();
+  } catch (error) {
+    console.error(error);
+    setDataStatus(`Error al leer Excel: ${error.message}`);
+  }
+}
+
+async function loadGoogleSheet() {
+  if (!window.XLSX) return;
+  setDataStatus('Leyendo Google Sheets...');
+  try {
+    const response = await fetch(`${GOOGLE_SHEET_EXPORT_URL}&cacheBust=${Date.now()}`);
+    if (!response.ok) {
+      throw new Error(`Google Sheets respondio ${response.status}`);
+    }
+    const data = await response.arrayBuffer();
+    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+    state.sheets = {};
+    workbook.SheetNames.forEach((name) => {
+      state.sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: '', raw: false });
+    });
+    state.currentFileName = 'Google Sheets Brigadas';
+    validateRequiredSheets();
+    setDataStatus('Datos cargados desde Google Sheets');
+    renderAll();
+  } catch (error) {
+    try {
+      await loadGoogleSheetFromAppsScript();
+      setDataStatus('Datos cargados desde Google Sheets');
+      renderAll();
+    } catch (fallbackError) {
+      try {
+        await loadGoogleSheetsByJsonp();
+        setDataStatus('Datos cargados desde Google Sheets');
+        renderAll();
+      } catch (lastError) {
+        console.warn('No se pudo leer Google Sheets', error, fallbackError, lastError);
+        setDataStatus('No se pudo leer Google Sheets. Revisar permisos o usar Cargar Excel.');
+      }
+    }
+  }
+}
+
+async function loadGoogleSheetFromAppsScript() {
+  const payload = await loadJsonp(`${APPS_SCRIPT_URL}?action=read_all`);
+  if (!payload.ok || !payload.sheets) throw new Error(payload.error || 'Respuesta invalida del Web App');
+  state.sheets = payload.sheets;
+  state.currentFileName = 'Google Sheets Brigadas';
+  validateRequiredSheets();
+}
+
+async function loadGoogleSheetsByJsonp() {
+  const entries = await Promise.all(GOOGLE_SHEET_NAMES.map(async (sheetName) => {
+    try {
+      const rows = await loadGoogleSheetTab(sheetName);
+      return [sheetName, rows];
+    } catch (error) {
+      if (['CONFIG_BRIGADAS', 'PERSONAL', 'ENCUENTROS'].includes(sheetName)) throw error;
+      return [sheetName, []];
+    }
+  }));
+  state.sheets = Object.fromEntries(entries);
+  state.currentFileName = 'Google Sheets Brigadas';
+  validateRequiredSheets();
+}
+
+function loadGoogleSheetTab(sheetName) {
+  const url = new URL(`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq`);
+  url.searchParams.set('sheet', sheetName);
+  return loadJsonp(url.toString()).then((payload) => {
+    if (payload.status === 'error') {
+      throw new Error(payload.errors?.[0]?.detailed_message || `No se pudo leer ${sheetName}`);
+    }
+    return gvizTableToRows(payload.table);
+  });
+}
+
+function loadJsonp(baseUrl) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `brigadasJsonp_${Date.now()}_${Math.round(Math.random() * 10000)}`;
+    const script = document.createElement('script');
+    const url = new URL(baseUrl);
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Tiempo agotado leyendo Apps Script'));
+    }, 20000);
+    if (url.hostname.includes('docs.google.com')) {
+      url.searchParams.set('tqx', `out:json;responseHandler:${callbackName}`);
+    } else {
+      url.searchParams.set('callback', callbackName);
+    }
+    window[callbackName] = (payload) => {
+      cleanup();
+      resolve(payload);
+    };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('No se pudo cargar JSONP'));
+    };
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[callbackName];
+      script.remove();
+    }
+    script.src = url.toString();
+    document.head.appendChild(script);
+  });
+}
+
+function gvizTableToRows(table) {
+  const headers = (table.cols || []).map((col) => normalizeHeader(col.label || col.id));
+  return (table.rows || []).map((row) => {
+    const output = {};
+    headers.forEach((header, index) => {
+      if (!header) return;
+      const cell = row.c?.[index];
+      output[header] = cell?.f ?? cell?.v ?? '';
+    });
+    return output;
+  }).filter((row) => Object.values(row).some((value) => value !== ''));
+}
+
+function validateRequiredSheets() {
+  ['CONFIG_BRIGADAS', 'PERSONAL', 'ENCUENTROS'].forEach((sheet) => {
+    if (!state.sheets[sheet]) console.warn(`Falta la hoja ${sheet}`);
+  });
+}
+
+function renderAll() {
+  if (!getBrigadasActivas().some((b) => b.id_brigada === state.selectedBrigade)) {
+    state.selectedBrigade = getBrigadasActivas()[0]?.id_brigada || '';
+  }
+  renderNavigation();
+  renderBrigades();
+  renderMembers();
+  renderCalendar();
+  setupAdminFilters();
+  setupScheduleOptions();
+  renderAdmin();
+}
+
+function openView(viewId) {
+  if (viewId === 'adminView' && sessionStorage.getItem('brigadasAdmin') !== '1') {
+    requestAdminAccess();
+    return;
+  }
+  if (viewId !== 'brigadasView') closeBrigadeDetail(false);
+  document.querySelectorAll('.view').forEach((view) => view.classList.toggle('active', view.id === viewId));
+  document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.view === viewId));
+}
+
+function requestAdminAccess() {
+  if (sessionStorage.getItem('brigadasAdmin') === '1') {
+    openView('adminView');
+    return;
+  }
+  document.getElementById('adminPassword').value = '';
+  document.getElementById('adminError').classList.add('hidden');
+  document.getElementById('adminDialog').showModal();
+}
+
+function handleAdminSubmit(event) {
+  event.preventDefault();
+  if (document.getElementById('adminPassword').value === ADMIN_PASSWORD) {
+    sessionStorage.setItem('brigadasAdmin', '1');
+    document.querySelector('[data-view="adminView"]')?.classList.remove('locked');
+    document.getElementById('adminDialog').close();
+    openView('adminView');
+  } else {
+    document.getElementById('adminError').classList.remove('hidden');
+  }
+}
+
+function renderNavigation() {
+  document.querySelector('[data-view="adminView"]')?.classList.toggle('locked', sessionStorage.getItem('brigadasAdmin') !== '1');
+}
+
+function renderBrigades() {
+  const cards = document.getElementById('brigadeCards');
+  cards.innerHTML = '';
+  getBrigadasActivas().forEach((brigade) => {
+    const card = document.createElement('article');
+    card.className = `brigade-card${brigade.id_brigada === state.selectedBrigade ? ' active' : ''}`;
+    card.style.borderLeftColor = brigade.color || '#8d1619';
+    card.innerHTML = `
+      <img src="${logoPath(brigade)}" alt="">
+      <div>
+        <strong>${brigade.nombre_brigada}</strong>
+        <p></p>
+      </div>
+    `;
+    card.addEventListener('click', () => {
+      state.selectedBrigade = brigade.id_brigada;
+      renderBrigades();
+      renderMembers();
+      renderEquipment();
+      renderCertificates();
+      renderBibliography();
+      openBrigadePanel('membersPanel');
+      document.getElementById('brigadeDetail').classList.remove('hidden');
+      document.body.classList.add('brigade-open');
+      document.getElementById('brigadeDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    cards.appendChild(card);
+  });
+}
+
+function renderMembers() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  if (!brigade) return;
+  const members = getIntegrantesBrigada(brigade.id_brigada);
+  const tbody = document.getElementById('membersTable');
+  const list = document.getElementById('membersList');
+  const warning = document.getElementById('attendanceWarning');
+  document.getElementById('selectedBrigadeTitle').textContent = brigade.nombre_brigada;
+  document.getElementById('selectedBrigadeMeta').textContent = '';
+  tbody.innerHTML = '';
+  list.innerHTML = '';
+  warning.classList.toggle('hidden', members.length > 0);
+  warning.textContent = members.length ? '' : 'Advertencia: esta brigada no tiene integrantes cargados en PERSONAL.';
+  document.getElementById('membersCount').textContent = `Integrantes: ${members.length}`;
+  members.forEach((person, index) => {
+    const name = [person.apellido, person.nombre].filter(Boolean).join(', ') || person.bombero || 'Sin nombre';
+    const item = document.createElement('div');
+    item.className = 'simple-item';
+    item.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(person.legajo || '')}</span>`;
+    list.appendChild(item);
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${escapeHtml(name)}</td>
+      <td>${escapeHtml(person.legajo || '')}</td>
+      <td>${escapeHtml(person.jerarquia || '')}</td>
+      <td><input name="att-${index}" type="radio" value="P"></td>
+      <td><input name="att-${index}" type="radio" value="A"></td>
+      <td><input name="att-${index}" type="radio" value="Just."></td>
+      <td><input type="text" data-observation="${index}" placeholder="Observacion"></td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function openBrigadePanel(panelId) {
+  document.querySelectorAll('.brigade-panel').forEach((panel) => panel.classList.toggle('active', panel.id === panelId));
+  document.querySelectorAll('[data-brigade-panel]').forEach((button) => button.classList.toggle('active', button.dataset.brigadePanel === panelId));
+}
+
+function closeBrigadeDetail(scrollTop = true) {
+  document.body.classList.remove('brigade-open');
+  document.getElementById('brigadeDetail')?.classList.add('hidden');
+  if (scrollTop) document.getElementById('brigadeCards')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderBrigadeMetrics() {
+  if (!document.getElementById('brigadeMetrics')) return;
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const month = monthKey(state.calendarDate);
+  const row = calcularResumenAdmin(month).find((item) => item.id_brigada === state.selectedBrigade);
+  const members = getIntegrantesBrigada(state.selectedBrigade).length;
+  document.getElementById('brigadeMetrics').innerHTML = [
+    ['Integrantes', members],
+    ['Reunion mensual', row?.cumple_encuentro_mensual ? 'OK' : 'Falta'],
+    ['Asistencia', `${row?.porcentaje_asistencia || 0}%`],
+    ['Necesidades', row?.necesidades_pendientes || 0],
+    ['Estado', row?.estado_general || 'Sin datos'],
+  ].map(([label, value]) => `<article class="kpi-card"><span>${label}</span><strong>${escapeHtml(value)}</strong></article>`).join('');
+  if (brigade) document.getElementById('selectedBrigadeTitle').textContent = brigade.nombre_brigada;
+}
+
+function renderEquipment() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const rows = getEquipamientoBrigada(state.selectedBrigade);
+  const container = document.getElementById('equipmentContainer');
+  if (!rows.length) {
+    container.innerHTML = '<div class="notice">No hay equipamiento cargado para esta brigada. Cargalo en la hoja EQUIPAMIENTO.</div>';
+    return;
+  }
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = row.ubicacion || 'Sin ubicacion';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  });
+  container.innerHTML = Array.from(grouped, ([ubicacion, items]) => `
+    <section class="equipment-location">
+      <h3>${escapeHtml(ubicacion)}</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Elemento</th>
+              <th>Un.</th>
+              <th>Cantidad</th>
+              <th>Estado</th>
+              <th>Obs.</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item, index) => `
+              <tr data-equipment-row="1">
+                <td>${escapeHtml(item.elemento || '')}</td>
+                <td>${escapeHtml(item.unidades || '')}</td>
+                <td>
+                  <select data-eq-field="cantidad">
+                    <option>Bien</option>
+                    <option>Hay menos</option>
+                    <option>Hay mas</option>
+                  </select>
+                </td>
+                <td>
+                  <select data-eq-field="estado">
+                    <option>Bueno</option>
+                    <option>Regular</option>
+                    <option>Malo</option>
+                  </select>
+                </td>
+                <td><input data-eq-field="obs" type="text" placeholder="Obs..."></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `).join('');
+}
+
+function renderCertificates() {
+  const select = document.getElementById('certificateMember');
+  select.innerHTML = '';
+  getIntegrantesBrigada(state.selectedBrigade).forEach((person) => {
+    const name = [person.apellido, person.nombre].filter(Boolean).join(', ') || person.bombero || person.legajo || 'Sin nombre';
+    select.add(new Option(name, person.legajo || name));
+  });
+}
+
+function renderBibliography() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const raw = brigade?.bibliografia_url || brigade?.link_bibliografia || brigade?.bibliografia || '';
+  const links = String(raw).split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+  const container = document.getElementById('bibliographyLinks');
+  container.innerHTML = links.length
+    ? links.map((link, index) => `<a class="simple-item" href="${escapeHtml(link)}" target="_blank" rel="noreferrer"><strong>Material ${index + 1}</strong><span>${escapeHtml(link)}</span></a>`).join('')
+    : '<div class="simple-item"><strong>Material 1</strong><span>Pendiente de link</span></div><div class="simple-item"><strong>Material 2</strong><span>Pendiente de link</span></div>';
+}
+
+function renderCalendar() {
+  const selectedMonth = monthKey(state.calendarDate);
+  const meetings = getEncuentrosMes(selectedMonth);
+  const missing = getBrigadasSinEncuentro(selectedMonth);
+  renderCalendarInto({
+    gridId: 'calendarGrid',
+    titleId: 'calendarTitle',
+    counterId: 'calendarCounter',
+    missingId: 'missingMeetings',
+    selectedMonth,
+    meetings,
+    missing,
+  });
+  renderCalendarInto({
+    gridId: 'homeCalendarGrid',
+    titleId: 'homeCalendarTitle',
+    counterId: 'homeCalendarCounter',
+    missingId: 'homeMissingMeetings',
+    selectedMonth,
+    meetings,
+    missing,
+  });
+  const covered = getBrigadasActivas().length - missing.length;
+  document.getElementById('homeCoveredCount').textContent = `${covered} / ${getBrigadasActivas().length}`;
+}
+
+function renderCalendarInto({ gridId, titleId, counterId, missingId, selectedMonth, meetings, missing }) {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes'].forEach((day) => {
+    const head = document.createElement('div');
+    head.className = 'day-head';
+    head.textContent = day;
+    grid.appendChild(head);
+  });
+  calendarWeekdays(state.calendarDate).forEach((date) => {
+    const cell = document.createElement('div');
+    const isCurrentMonth = monthKey(date) === selectedMonth;
+    cell.className = `day-cell${isCurrentMonth ? '' : ' outside'}`;
+    cell.innerHTML = `<div class="day-number">${date.getDate()}</div>`;
+    meetings.filter((meeting) => sameDay(parseDate(meeting.fecha), date)).forEach((meeting) => {
+      const pill = document.createElement('span');
+      pill.className = `event-pill ${normalizeState(meeting.estado)}`;
+      const brigade = getBrigadasActivas().find((item) => item.id_brigada === meeting.id_brigada);
+      const hour = meeting.hora_inicio || '';
+      pill.innerHTML = `<img src="${logoPath(brigade || {})}" alt=""><span>${escapeHtml(hour)}</span>`;
+      cell.appendChild(pill);
+    });
+    grid.appendChild(cell);
+  });
+  const covered = getBrigadasActivas().length - missing.length;
+  document.getElementById(titleId).textContent = state.calendarDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  document.getElementById(counterId).textContent = `Encuentros mensuales cubiertos: ${covered} / ${getBrigadasActivas().length}`;
+  document.getElementById(missingId).textContent = missing.length
+    ? `Falta programar encuentro mensual para: ${missing.map((b) => b.nombre_brigada).join(', ')}`
+    : 'Todas las brigadas tienen encuentro mensual programado';
+}
+
+function setupAdminFilters() {
+  const month = document.getElementById('adminMonth');
+  const brigade = document.getElementById('adminBrigadeFilter');
+  const status = document.getElementById('adminStateFilter');
+  month.value = state.adminMonth;
+  brigade.innerHTML = '<option value="">Todas</option>';
+  getBrigadasActivas().forEach((item) => brigade.add(new Option(item.nombre_brigada, item.id_brigada)));
+  status.innerHTML = '<option value="">Todos</option><option>OK</option><option>Observado</option><option>Critico</option>';
+}
+
+function setupScheduleOptions() {
+  const select = document.getElementById('scheduleBrigade');
+  if (!select) return;
+  const current = select.value || state.selectedBrigade;
+  select.innerHTML = '';
+  getBrigadasActivas().forEach((item) => select.add(new Option(item.nombre_brigada, item.id_brigada)));
+  select.value = current;
+}
+
+function renderAdmin() {
+  state.adminMonth = document.getElementById('adminMonth').value || monthKey(new Date());
+  const summary = calcularResumenAdmin(state.adminMonth).filter(filterAdminRow);
+  const kpis = calculateKpis(calcularResumenAdmin(state.adminMonth));
+  document.getElementById('adminKpis').innerHTML = [
+    ['Brigadas activas', kpis.active],
+    ['Encuentros cubiertos este mes', `${kpis.covered} / ${kpis.active}`],
+    ['% reuniones cumplidas', `${kpis.meetingCompliance}%`],
+    ['Faltante mensual', kpis.missing],
+    ['Asistencia promedio mensual', `${kpis.avgAttendance}%`],
+    ['Indice general', `${kpis.generalIndex}%`],
+    ['Necesidades pendientes', kpis.pendingNeeds],
+    ['Checks criticos', kpis.criticalChecks],
+  ].map(([label, value]) => `<article class="kpi-card"><span>${label}</span><strong>${value}</strong></article>`).join('');
+
+  document.getElementById('adminTable').innerHTML = summary.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.brigada)}</td>
+      <td>${row.cumple_encuentro_mensual ? 'OK' : 'Falta programar'}</td>
+      <td>${row.encuentros_validos_mes}</td>
+      <td>${row.cantidad_asistencias}</td>
+      <td>${row.total_presentes}</td>
+      <td>${row.total_ausentes}</td>
+      <td>${row.total_justificados}</td>
+      <td>${row.porcentaje_asistencia}%</td>
+      <td>${row.checks_equipamiento}</td>
+      <td>${row.necesidades_pendientes}</td>
+      <td><span class="badge ${row.estado_general.toLowerCase()}">${row.estado_general}</span></td>
+    </tr>
+  `).join('');
+  renderAlerts(calcularResumenAdmin(state.adminMonth));
+  renderAdminEvents();
+}
+
+function renderAdminEvents() {
+  const month = document.getElementById('adminMonth').value || state.adminMonth;
+  const rows = getEncuentrosMes(month).sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  document.getElementById('adminEventsTable').innerHTML = rows.map((event) => `
+    <tr>
+      <td>${escapeHtml(formatDateInput(event.fecha))}</td>
+      <td>${escapeHtml(event.hora_inicio || '')}</td>
+      <td>${escapeHtml(event.brigada || brigadeName(event.id_brigada))}</td>
+      <td>${escapeHtml(event.estado || '')}</td>
+      <td>${escapeHtml(event.tema || '')}</td>
+      <td>
+        <button data-edit-event="${escapeHtml(event.id_encuentro || '')}">Editar</button>
+        <button data-delete-event="${escapeHtml(event.id_encuentro || '')}">Eliminar</button>
+      </td>
+    </tr>
+  `).join('');
+  document.querySelectorAll('[data-edit-event]').forEach((button) => button.addEventListener('click', () => openScheduleDialog(button.dataset.editEvent)));
+  document.querySelectorAll('[data-delete-event]').forEach((button) => button.addEventListener('click', () => deleteCalendarEvent(button.dataset.deleteEvent)));
+}
+
+function openScheduleDialog(eventId = '') {
+  setupScheduleOptions();
+  const editing = eventId ? findMeetingById(eventId) : null;
+  state.editingEventId = eventId || '';
+  document.getElementById('scheduleBrigade').value = editing?.id_brigada || state.selectedBrigade || getBrigadasActivas()[0]?.id_brigada || '';
+  document.getElementById('scheduleDate').value = editing ? formatDateInput(editing.fecha) : new Date().toISOString().slice(0, 10);
+  document.getElementById('scheduleTime').value = editing?.hora_inicio || '20:00';
+  document.getElementById('scheduleTopic').value = editing?.tema || '';
+  document.getElementById('scheduleResponsible').value = editing?.responsable || '';
+  document.getElementById('scheduleMessage').classList.add('hidden');
+  document.getElementById('scheduleDialog').showModal();
+}
+
+async function handleScheduleSubmit(event) {
+  event.preventDefault();
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === document.getElementById('scheduleBrigade').value);
+  const payload = {
+    action: state.editingEventId ? 'editar_encuentro' : 'programar_encuentro',
+    id_encuentro: state.editingEventId || `enc_${Date.now()}`,
+    fecha: document.getElementById('scheduleDate').value,
+    mes_periodo: monthKey(document.getElementById('scheduleDate').value),
+    id_brigada: brigade.id_brigada,
+    brigada: brigade.nombre_brigada,
+    tipo_encuentro: 'Encuentro mensual',
+    tema: document.getElementById('scheduleTopic').value,
+    responsable: document.getElementById('scheduleResponsible').value,
+    lugar: '',
+    hora_inicio: document.getElementById('scheduleTime').value,
+    hora_fin: '',
+    estado: 'Programado',
+    observaciones: 'Cargado desde modulo Brigadas',
+  };
+  upsertLocalMeeting(payload);
+  renderCalendar();
+  renderAdmin();
+  const message = document.getElementById('scheduleMessage');
+  message.textContent = 'Encuentro agendado en pantalla. Enviando a Google Sheets...';
+  message.classList.remove('hidden');
+  try {
+    await postToAppsScript(payload);
+    message.textContent = 'Encuentro enviado. Tocá Actualizar Sheets en unos segundos para traer la agenda confirmada.';
+    setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
+  } catch (error) {
+    console.warn(error);
+    message.textContent = 'Quedo agendado en pantalla, pero no se pudo confirmar el envio. Revisar despliegue del Apps Script.';
+  }
+}
+
+function upsertLocalMeeting(payload) {
+  const index = state.localMeetings.findIndex((row) => row.id_encuentro === payload.id_encuentro);
+  if (index >= 0) state.localMeetings[index] = payload;
+  else state.localMeetings.push(payload);
+}
+
+async function deleteCalendarEvent(eventId) {
+  if (!eventId) return;
+  const ok = window.confirm('Eliminar este encuentro del calendario?');
+  if (!ok) return;
+  state.localMeetings = state.localMeetings.filter((row) => row.id_encuentro !== eventId);
+  if (state.sheets.ENCUENTROS) {
+    state.sheets.ENCUENTROS = state.sheets.ENCUENTROS.filter((row) => normalizeRow(row).id_encuentro !== eventId);
+  }
+  renderCalendar();
+  renderAdmin();
+  await postToAppsScript({ action: 'eliminar_encuentro', id_encuentro: eventId });
+}
+
+function findMeetingById(eventId) {
+  return [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).find((row) => row.id_encuentro === eventId);
+}
+
+async function postToAppsScript(payload) {
+  const body = new URLSearchParams(payload);
+  await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body,
+  });
+}
+
+function renderAlerts(summary) {
+  const alerts = [];
+  summary.filter((row) => !row.cumple_encuentro_mensual).forEach((row) => alerts.push(`Brigada sin encuentro mensual: ${row.brigada}`));
+  summary.filter((row) => row.total_convocados > 0 && row.porcentaje_asistencia < 75).forEach((row) => alerts.push(`Asistencia menor a 75%: ${row.brigada}`));
+  summary.filter((row) => row.checks_criticos > 0).forEach((row) => alerts.push(`Checks criticos de equipamiento: ${row.brigada}`));
+  summary.filter((row) => row.necesidades_alta_prioridad > 0).forEach((row) => alerts.push(`Necesidades de alta prioridad: ${row.brigada}`));
+  detectRepeatedAbsences().forEach((item) => alerts.push(`Ausencias reiteradas: ${item.nombre} (${item.brigada})`));
+  document.getElementById('alertsList').innerHTML = alerts.length
+    ? alerts.map((alert) => `<div class="alert">${escapeHtml(alert)}</div>`).join('')
+    : '<div class="notice">Sin alertas operativas para el filtro actual.</div>';
+}
+
+function filterAdminRow(row) {
+  const brigade = document.getElementById('adminBrigadeFilter').value;
+  const status = document.getElementById('adminStateFilter').value;
+  const onlyMissing = document.getElementById('onlyMissingFilter').checked;
+  const onlyHigh = document.getElementById('onlyHighFilter').checked;
+  if (brigade && row.id_brigada !== brigade) return false;
+  if (status && row.estado_general !== status) return false;
+  if (onlyMissing && row.cumple_encuentro_mensual) return false;
+  if (onlyHigh && row.necesidades_alta_prioridad === 0) return false;
+  return true;
+}
+
+function getBrigadasActivas() {
+  const rows = state.sheets.CONFIG_BRIGADAS?.length ? state.sheets.CONFIG_BRIGADAS : BRIGADES_FALLBACK;
+  return rows
+    .map(normalizeBrigade)
+    .filter((b) => isYes(b.activa) && b.id_brigada)
+    .sort((a, b) => Number(a.orden || 0) - Number(b.orden || 0));
+}
+
+function getBibliographyUrl(brigade) {
+  const field = brigade.bibliografia_url || brigade.link_bibliografia || brigade.bibliografia;
+  if (field) return field;
+  return `https://www.google.com/search?q=${encodeURIComponent(`Brigada ${brigade.nombre_brigada} bomberos capacitacion`)}`;
+}
+
+function getIntegrantesBrigada(id_brigada) {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === id_brigada);
+  const column = brigade?.columna_personal;
+  if (!column || !state.sheets.PERSONAL) return [];
+  return state.sheets.PERSONAL
+    .map(normalizePerson)
+    .filter((person) => isYes(person.activo || 'SI') && isMarked(person[column]));
+}
+
+function getEquipamientoBrigada(id_brigada) {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === id_brigada);
+  return (state.sheets.EQUIPAMIENTO || [])
+    .map(normalizeRow)
+    .filter((row) => normalizeState(row.brigada) === normalizeState(brigade?.nombre_brigada) || row.id_brigada === id_brigada);
+}
+
+function getEncuentrosMes(mes_periodo) {
+  return [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).filter((row) => {
+    const key = row.mes_periodo || monthKey(parseDate(row.fecha));
+    return key === mes_periodo;
+  });
+}
+
+function getBrigadasSinEncuentro(mes_periodo) {
+  const meetings = getEncuentrosMes(mes_periodo).filter((meeting) => VALID_MEETING_STATES.has(normalizeState(meeting.estado)));
+  return getBrigadasActivas().filter((brigade) => !meetings.some((meeting) => meeting.id_brigada === brigade.id_brigada));
+}
+
+function calcularResumenAdmin(mes_periodo) {
+  return getBrigadasActivas().map((brigade) => {
+    const validMeetings = getEncuentrosMes(mes_periodo).filter((meeting) => meeting.id_brigada === brigade.id_brigada && VALID_MEETING_STATES.has(normalizeState(meeting.estado)));
+    const attendance = calcularPorcentajeAsistencia(brigade.id_brigada, mes_periodo);
+    const needs = getNecesidadesPendientes(brigade.id_brigada);
+    const equipment = getEstadoEquipamiento(brigade.id_brigada, mes_periodo);
+    let estado = 'OK';
+    if (!validMeetings.length || equipment.critical > 0) estado = 'Critico';
+    else if (attendance.total > 0 && attendance.percent < 75 || needs.pending > 0) estado = 'Observado';
+    return {
+      mes_periodo,
+      id_brigada: brigade.id_brigada,
+      brigada: brigade.nombre_brigada,
+      encuentros_validos_mes: validMeetings.length,
+      cumple_encuentro_mensual: validMeetings.length > 0,
+      cantidad_asistencias: attendance.records,
+      total_convocados: attendance.total,
+      total_presentes: attendance.present,
+      total_ausentes: attendance.absent,
+      total_justificados: attendance.justified,
+      porcentaje_asistencia: attendance.percent,
+      checks_equipamiento: equipment.total,
+      checks_ok: equipment.ok,
+      checks_observados: equipment.observed,
+      checks_criticos: equipment.critical,
+      necesidades_pendientes: needs.pending,
+      necesidades_alta_prioridad: needs.high,
+      estado_general: estado,
+      ultima_actualizacion: new Date().toISOString(),
+    };
+  });
+}
+
+function calcularPorcentajeAsistencia(id_brigada, mes_periodo) {
+  const assistanceIds = (state.sheets.ASISTENCIAS || [])
+    .map(normalizeRow)
+    .filter((row) => row.id_brigada === id_brigada && (row.mes_periodo || monthKey(parseDate(row.fecha))) === mes_periodo)
+    .map((row) => row.id_asistencia)
+    .filter(Boolean);
+  const details = (state.sheets.DETALLE_ASISTENCIAS || []).map(normalizeRow).filter((row) => assistanceIds.includes(row.id_asistencia));
+  const present = details.filter((row) => normalizeState(row.estado_asistencia) === 'p').length;
+  const absent = details.filter((row) => normalizeState(row.estado_asistencia) === 'a').length;
+  const justified = details.filter((row) => normalizeState(row.estado_asistencia) === 'just.').length;
+  const total = present + absent + justified;
+  return { records: assistanceIds.length, present, absent, justified, total, percent: total ? Math.round((present / total) * 100) : 0 };
+}
+
+function getNecesidadesPendientes(id_brigada) {
+  const rows = (state.sheets.NECESIDADES || []).map(normalizeRow).filter((row) => row.id_brigada === id_brigada);
+  const pending = rows.filter((row) => ['pendiente', 'cotizado', 'solicitado'].includes(normalizeState(row.estado))).length;
+  const high = rows.filter((row) => normalizeState(row.prioridad) === 'alta' && ['pendiente', 'cotizado', 'solicitado'].includes(normalizeState(row.estado))).length;
+  return { pending, high };
+}
+
+function getEstadoEquipamiento(id_brigada, mes_periodo) {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === id_brigada);
+  const checks = (state.sheets.CHECK_EQUIPAMIENTO || []).map(normalizeRow).filter((row) => {
+    const sameBrigade = row.id_brigada === id_brigada || normalizeState(row.brigada) === normalizeState(brigade?.nombre_brigada);
+    return sameBrigade && (row.mes_periodo || monthKey(parseDate(row.fecha))) === mes_periodo;
+  });
+  return {
+    total: checks.length,
+    ok: checks.filter((row) => normalizeState(row.cantidad_ok_no) === 'ok' && normalizeState(row.estado_bueno_malo) === 'bueno').length,
+    observed: checks.filter((row) => normalizeState(row.cantidad_ok_no) === 'no').length,
+    critical: checks.filter((row) => normalizeState(row.estado_bueno_malo) === 'malo').length,
+  };
+}
+
+function detectRepeatedAbsences() {
+  const details = (state.sheets.DETALLE_ASISTENCIAS || []).map(normalizeRow);
+  const absences = new Map();
+  details.filter((row) => normalizeState(row.estado_asistencia) === 'a').forEach((row) => {
+    const key = row.legajo || `${row.apellido}-${row.nombre}`;
+    const current = absences.get(key) || { count: 0, nombre: [row.apellido, row.nombre].filter(Boolean).join(', '), brigada: 'Brigadas' };
+    current.count += 1;
+    absences.set(key, current);
+  });
+  return Array.from(absences.values()).filter((item) => item.count >= 3);
+}
+
+async function exportarCalendarioPNG() {
+  const node = document.getElementById('calendarExport');
+  const canvas = await html2canvas(node, { backgroundColor: '#ffffff', scale: 2 });
+  const link = document.createElement('a');
+  link.download = `brigadas-calendario-${monthKey(state.calendarDate)}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+async function generarPDFAsistencia(includeLoaded) {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const members = getIntegrantesBrigada(state.selectedBrigade);
+  const jsPDF = window.jspdf?.jsPDF;
+  if (!jsPDF) {
+    alert('No se pudo cargar jsPDF.');
+    return;
+  }
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const logo = await imageToDataUrl(logoPath(brigade));
+  if (logo) {
+    doc.addImage(logo, 'JPEG', 14, 10, 22, 22);
+  } else {
+    doc.rect(14, 10, 22, 22);
+    doc.setFontSize(7);
+    doc.text('Logo pendiente', 16, 22);
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(`Brigada ${brigade.nombre_brigada}`, 42, 20);
+  doc.setFontSize(10);
+  doc.text(new Date().toLocaleDateString('es-AR'), 170, 20);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Integrantes de la Brigada', 14, 34);
+  const body = members.map((person, index) => {
+    const name = [person.apellido, person.nombre].filter(Boolean).join(', ') || person.bombero || 'Sin nombre';
+    const selected = includeLoaded ? document.querySelector(`input[name="att-${index}"]:checked`)?.value : '';
+    const obs = includeLoaded ? document.querySelector(`[data-observation="${index}"]`)?.value || '' : '';
+    return [name, selected === 'P' ? 'X' : '', selected === 'A' ? 'X' : '', selected === 'Just.' ? 'X' : '', obs];
+  });
+  if (doc.autoTable) {
+    doc.autoTable({
+      startY: 40,
+      head: [['Integrante', 'P', 'A', 'Just.', 'Obs.']],
+      body,
+      styles: { fontSize: 9, cellPadding: 2.3 },
+      headStyles: { fillColor: [6, 52, 82], textColor: [255, 255, 255] },
+      columnStyles: {
+        0: { cellWidth: 84 },
+        1: { cellWidth: 16, halign: 'center' },
+        2: { cellWidth: 16, halign: 'center' },
+        3: { cellWidth: 20, halign: 'center' },
+        4: { cellWidth: 42 },
+      },
+      margin: { left: 14, right: 14 },
+    });
+  }
+  let y = doc.lastAutoTable ? doc.lastAutoTable.finalY : 44;
+  y = Math.max(y + 10, 235);
+  if (y > 248) {
+    doc.addPage();
+    y = 20;
+  }
+  doc.text('Observaciones:', 14, y);
+  doc.line(14, y + 8, 196, y + 8);
+  doc.text('Responsable / Instructor', 14, 282);
+  doc.text('Firma', 150, 282);
+  doc.line(14, 274, 78, 274);
+  doc.line(135, 274, 196, 274);
+  const filename = `asistencia-${brigade.id_brigada}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  const base64 = doc.output('datauristring').split(',')[1];
+  await guardarReporteDrive({
+    filename,
+    mime_type: 'application/pdf',
+    base64,
+    id_brigada: brigade.id_brigada,
+    brigada: brigade.nombre_brigada,
+    tipo_reporte: 'asistencia',
+  });
+  doc.save(filename);
+}
+
+async function guardarReporteDrive(payload) {
+  await postToAppsScript({ action: 'guardar_reporte', ...payload });
+}
+
+async function generarPDFCheckEquipamiento() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const rows = getEquipamientoBrigada(state.selectedBrigade);
+  if (!rows.length) {
+    alert('No hay equipamiento cargado para esta brigada en la hoja EQUIPAMIENTO.');
+    return;
+  }
+  const jsPDF = window.jspdf?.jsPDF;
+  if (!jsPDF) return alert('No se pudo cargar jsPDF.');
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  doc.setFillColor(6, 52, 82);
+  doc.rect(0, 0, 210, 28, 'F');
+  doc.setFillColor(223, 52, 56);
+  doc.rect(0, 26, 210, 2, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.text(`Check de equipamiento - ${brigade.nombre_brigada}`, 14, 12);
+  doc.setFontSize(9);
+  doc.text(new Date().toLocaleString('es-AR'), 14, 20);
+  doc.setTextColor(20, 32, 42);
+  let y = 36;
+  const grouped = new Map();
+  rows.forEach((item) => {
+    const key = item.ubicacion || 'Sin ubicacion';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  });
+  Array.from(grouped, ([ubicacion, items]) => {
+    if (y > 230) {
+      doc.addPage();
+      y = 18;
+    }
+    doc.setFillColor(6, 52, 82);
+    doc.roundedRect(14, y, 182, 8, 1.5, 1.5, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.text(ubicacion, 17, y + 5.5);
+    doc.setTextColor(20, 32, 42);
+    const body = items.map((item, index) => {
+      const rowElement = document.querySelectorAll('[data-equipment-row]')[rows.indexOf(item)];
+      const cantidad = rowElement?.querySelector('[data-eq-field="cantidad"]')?.value || 'Bien';
+      const estado = rowElement?.querySelector('[data-eq-field="estado"]')?.value || 'Bueno';
+      const obs = rowElement?.querySelector('[data-eq-field="obs"]')?.value || '';
+      return [item.elemento || '', item.unidades || '', cantidad, estado, obs];
+    });
+    doc.autoTable({
+      startY: y + 10,
+      head: [['Elemento', 'Un.', 'Cantidad', 'Estado', 'Obs.']],
+      body,
+      styles: { fontSize: 8, cellPadding: 2.1 },
+      headStyles: { fillColor: [6, 52, 82], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [242, 246, 248] },
+      margin: { left: 14, right: 14 },
+      columnStyles: {
+        0: { cellWidth: 62 },
+        1: { cellWidth: 16, halign: 'center' },
+        2: { cellWidth: 28, halign: 'center' },
+        3: { cellWidth: 28, halign: 'center' },
+        4: { cellWidth: 48 },
+      },
+    });
+    y = doc.lastAutoTable.finalY + 9;
+  });
+  const filename = `check-equipamiento-${brigade.id_brigada}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  const base64 = doc.output('datauristring').split(',')[1];
+  await guardarReporteDrive({
+    filename,
+    mime_type: 'application/pdf',
+    base64,
+    id_brigada: brigade.id_brigada,
+    brigada: brigade.nombre_brigada,
+    tipo_reporte: 'equipamiento',
+  });
+  doc.save(filename);
+}
+
+async function enviarCertificado() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const memberValue = document.getElementById('certificateMember').value;
+  const title = document.getElementById('certificateTitle').value.trim();
+  const file = document.getElementById('certificateFile').files[0];
+  if (!memberValue) return alert('Seleccioná un integrante.');
+  if (!title) return alert('Completá el nombre de la capacitación.');
+  if (!file) return alert('Adjuntá el certificado.');
+  const dataUrl = await fileToDataUrl(file);
+  await postToAppsScript({
+    action: 'guardar_certificado',
+    filename: file.name,
+    mime_type: file.type || 'application/octet-stream',
+    base64: dataUrl.split(',')[1],
+    id_brigada: brigade.id_brigada,
+    brigada: brigade.nombre_brigada,
+    integrante: memberValue,
+    titulo: title,
+  });
+  alert('Certificado enviado para legajo personal.');
+  document.getElementById('certificateTitle').value = '';
+  document.getElementById('certificateFile').value = '';
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function exportAdminCsv() {
+  const rows = calcularResumenAdmin(state.adminMonth).filter(filterAdminRow);
+  const headers = Object.keys(rows[0] || { mes_periodo: '', id_brigada: '', brigada: '' });
+  const csv = [headers.join(','), ...rows.map((row) => headers.map((key) => csvCell(row[key])).join(','))].join('\n');
+  downloadBlob(csv, `admin-brigadas-${state.adminMonth}.csv`, 'text/csv;charset=utf-8');
+}
+
+function exportAdminPdf() {
+  window.print();
+}
+
+function descargarIntegrantesBrigada() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const members = getIntegrantesBrigada(state.selectedBrigade);
+  const headers = ['apellido', 'nombre', 'bombero', 'legajo', 'jerarquia'];
+  const csv = [headers.join(','), ...members.map((row) => headers.map((key) => csvCell(row[key])).join(','))].join('\n');
+  downloadBlob(csv, `integrantes-${brigade.id_brigada}.csv`, 'text/csv;charset=utf-8');
+}
+
+async function descargarLogoBrigada() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const response = await fetch(logoPath(brigade));
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = brigade.logo_file || `logo-${brigade.id_brigada}.jpeg`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function calculateKpis(summary) {
+  const active = getBrigadasActivas().length;
+  const covered = summary.filter((row) => row.cumple_encuentro_mensual).length;
+  const attendanceRows = summary.filter((row) => row.total_convocados > 0);
+  const avgAttendance = attendanceRows.length ? Math.round(attendanceRows.reduce((sum, row) => sum + row.porcentaje_asistencia, 0) / attendanceRows.length) : 0;
+  return {
+    active,
+    covered,
+    missing: active - covered,
+    meetingCompliance: active ? Math.round((covered / active) * 100) : 0,
+    avgAttendance,
+    generalIndex: Math.round((((active ? covered / active : 0) * 100) + avgAttendance) / 2),
+    pendingNeeds: summary.reduce((sum, row) => sum + row.necesidades_pendientes, 0),
+    highNeeds: summary.reduce((sum, row) => sum + row.necesidades_alta_prioridad, 0),
+    criticalChecks: summary.reduce((sum, row) => sum + row.checks_criticos, 0),
+  };
+}
+
+function changeMonth(delta) {
+  state.calendarDate = new Date(state.calendarDate.getFullYear(), state.calendarDate.getMonth() + delta, 1);
+  renderCalendar();
+}
+
+function calendarWeekdays(date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const start = new Date(first);
+  const day = first.getDay() || 7;
+  start.setDate(first.getDate() - day + 1);
+  const days = [];
+  let cursor = new Date(start);
+  while (days.length < 30 || monthKey(cursor) === monthKey(date)) {
+    if ((cursor.getDay() || 7) <= 5) days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+    if (days.length >= 25 && monthKey(cursor) !== monthKey(date) && (cursor.getDay() || 7) === 1) break;
+  }
+  return days;
+}
+
+function normalizeBrigade(row) {
+  const normalized = normalizeRow(row);
+  if (normalized.id_brigada === 'socorrismo') normalized.columna_personal = 'socorrismo';
+  return normalized;
+}
+
+function normalizePerson(row) {
+  const normalized = normalizeRow(row);
+  if (!normalized.id_persona && normalized.legajo) normalized.id_persona = normalized.legajo;
+  if (!normalized.activo) normalized.activo = 'SI';
+  return normalized;
+}
+
+function normalizeRow(row) {
+  const result = {};
+  Object.entries(row || {}).forEach(([key, value]) => {
+    result[normalizeHeader(key)] = value;
+  });
+  return result;
+}
+
+function normalizeHeader(header) {
+  return String(header || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+function isMarked(value) {
+  return ['x', 'si', 'sí', 's', '1', 'true'].includes(normalizeState(value));
+}
+
+function isYes(value) {
+  return ['si', 'sí', 's', 'x', '1', 'true'].includes(normalizeState(value));
+}
+
+function normalizeState(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function monthKey(date) {
+  const parsed = date instanceof Date ? date : parseDate(date);
+  if (!parsed || Number.isNaN(parsed.getTime())) return '';
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function parseDate(value) {
+  if (value instanceof Date && !Number.isNaN(value)) return value;
+  if (!value) return null;
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  const local = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (local) return new Date(Number(local[3]), Number(local[2]) - 1, Number(local[1]));
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateInput(value) {
+  const date = parseDate(value);
+  if (!date) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function sameDay(a, b) {
+  return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function brigadeName(id) {
+  return getBrigadasActivas().find((b) => b.id_brigada === id)?.nombre_brigada || id || 'Brigada';
+}
+
+function logoPath(brigade) {
+  return `assets/brigadas/${brigade.logo_file || ''}`;
+}
+
+function imageToDataUrl(src) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
+    };
+    image.onerror = () => resolve('');
+    image.src = src;
+  });
+}
+
+function csvCell(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function setDataStatus(message) {
+  const sidebarStatus = document.getElementById('dataStatus');
+  const homeStatus = document.getElementById('dataStatusHome');
+  if (sidebarStatus) sidebarStatus.textContent = message;
+  if (homeStatus) homeStatus.textContent = message;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  }[char]));
+}
