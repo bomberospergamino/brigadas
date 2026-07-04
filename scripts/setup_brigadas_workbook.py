@@ -24,7 +24,13 @@ BRIGADAS = [
     ["rescate_acuatico", "Rescate acuatico", "rescate_acuatico", "rescateacuatico_logo.jpeg", "#0077B6", "SI", 1, 1, "", "", ""],
     ["buceo", "Buceo", "buceo", "buceo_logo.jpeg", "#003566", "SI", 2, 1, "", "", ""],
     ["k9", "K9", "k9", "k9_logo.jpeg", "#D00000", "SI", 3, 1, "", "", ""],
-    ["mat_pel", "Mat Pel", "mat_pel", "matpel_logo.jpeg", "#70E000", "SI", 4, 1, "", "", ""],
+    [
+        "mat_pel", "Mat Pel", "mat_pel", "matpel_logo.jpeg", "#70E000", "SI", 4, 1, "",
+        "General|https://drive.google.com/drive/folders/1Jn3Zg-V2umhoep5QKUiO3SPoiXm3VZUQ?usp=sharing\n"
+        "Identificacion|https://drive.google.com/drive/folders/1RLG5BTS_p_zFKUS3ye8ZhytzGvplL_QW?usp=drive_link\n"
+        "Material complementario|https://drive.google.com/drive/folders/17g4oBDcsGCvQXkPuojPtZvTVVnx-7ECp?usp=drive_link",
+        "",
+    ],
     ["altura", "Altura", "altura", "altura_logo.jpeg", "#B5179E", "SI", 5, 1, "", "", ""],
     ["socorrismo", "Socorrismo", "socorrismo", "socorrismo_logo.jpeg", "#E85D04", "SI", 6, 1, "", "", ""],
     ["brec", "BREC", "brec", "brec_logo.jpeg", "#6C584C", "SI", 7, 1, "", "", ""],
@@ -169,6 +175,10 @@ def compact_sheet_to_headers(ws, headers: list[str]):
             for index, header in enumerate(normalized, 1):
                 if "ubicacion" in header:
                     return index
+        if target == "unidades":
+            for index, header in enumerate(normalized, 1):
+                if header == "un" or "unidad" in header or "unidades" in header:
+                    return index
         if target == "cantidad_ok_no":
             for index, header in enumerate(normalized, 1):
                 if "cantidad" in header:
@@ -278,9 +288,11 @@ def prepare_workbook(path: Path):
     config_cols = header_map(ws_config)
     for row in range(2, ws_config.max_row + 1):
         brigade_id = ws_config.cell(row, config_cols["id_brigada"]).value
-        expected = next((item[2] for item in BRIGADAS if item[0] == brigade_id), None)
+        expected = next((item for item in BRIGADAS if item[0] == brigade_id), None)
         if expected:
-            ws_config.cell(row, config_cols["columna_personal"], expected)
+            ws_config.cell(row, config_cols["columna_personal"], expected[2])
+            if "bibliografia_url" in config_cols and expected[9]:
+                ws_config.cell(row, config_cols["bibliografia_url"], expected[9])
 
     for row in range(2, wb["PERSONAL"].max_row + 1):
         cols = header_map(wb["PERSONAL"])
@@ -301,8 +313,11 @@ def prepare_workbook(path: Path):
     add_validation(wb["ENCUENTROS"], "estado", list_validation(["Programado", "Realizado", "Suspendido", "Reprogramado", "Pendiente"]))
     add_validation(wb["ASISTENCIAS"], "estado_registro", list_validation(["Borrador", "Cerrado", "Anulado"]))
     add_validation(wb["DETALLE_ASISTENCIAS"], "estado_asistencia", list_validation(["P", "A", "Just."]))
+    brigade_names = [item[1] for item in BRIGADAS]
+    add_validation(wb["EQUIPAMIENTO"], "brigada", list_validation(brigade_names))
     add_validation(wb["EQUIPAMIENTO"], "cantidad_ok_no", list_validation(["OK", "NO"]))
     add_validation(wb["EQUIPAMIENTO"], "estado_bueno_malo", list_validation(["BUENO", "MALO"]))
+    add_validation(wb["CHECK_EQUIPAMIENTO"], "brigada", list_validation(brigade_names))
     add_validation(wb["CHECK_EQUIPAMIENTO"], "resultado_global", list_validation(["OK", "Observado", "Critico"]))
     add_validation(wb["CHECK_EQUIPAMIENTO"], "cantidad_ok_no", list_validation(["OK", "NO"]))
     add_validation(wb["CHECK_EQUIPAMIENTO"], "estado_bueno_malo", list_validation(["BUENO", "MALO"]))
