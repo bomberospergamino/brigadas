@@ -309,12 +309,18 @@ p { color: var(--muted); margin-top: 4px; }
 }
 
 .brigade-menu {
+  flex: 0 0 100%;
+  width: 100%;
+  max-width: 100%;
   display: flex;
   gap: 6px;
   padding: 14px;
   border-top: 1px solid var(--line);
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
 }
 
 .brigade-menu button {
@@ -403,7 +409,52 @@ p { color: var(--muted); margin-top: 4px; }
 }
 
 .equipment-location table {
-  min-width: 640px;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+#equipmentPanel .table-wrap {
+  overflow: visible;
+}
+
+#equipmentPanel table {
+  min-width: 0;
+}
+
+#equipmentPanel th,
+#equipmentPanel td {
+  padding: 8px;
+}
+
+#equipmentPanel th:nth-child(1),
+#equipmentPanel td:nth-child(1) {
+  width: 21%;
+}
+
+#equipmentPanel th:nth-child(2),
+#equipmentPanel td:nth-child(2) {
+  width: 27%;
+}
+
+#equipmentPanel th:nth-child(3),
+#equipmentPanel td:nth-child(3) {
+  width: 16%;
+}
+
+#equipmentPanel th:nth-child(4),
+#equipmentPanel td:nth-child(4) {
+  width: 18%;
+}
+
+#equipmentPanel th:nth-child(5),
+#equipmentPanel td:nth-child(5) {
+  width: 18%;
+}
+
+#equipmentPanel input,
+#equipmentPanel select {
+  width: 100%;
+  min-width: 0;
 }
 
 .calendar-entry {
@@ -768,6 +819,27 @@ td input[type="radio"] {
 
   .section-head, .panel-head {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .brigade-detail {
+    border-radius: 10px;
+  }
+
+  .brigade-menu {
+    margin: 0 -14px;
+    padding: 10px 14px 12px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+    scroll-snap-type: x proximity;
+  }
+
+  .brigade-menu button {
+    min-height: 38px;
+    padding: 8px 11px;
+    font-size: 13px;
+    scroll-snap-align: start;
   }
 
   .hero-panel {
@@ -787,4 +859,84 @@ td input[type="radio"] {
     min-height: 86px;
     padding: 6px;
   }
+
+  #equipmentPanel {
+    padding: 10px;
+  }
+
+  #equipmentPanel .table-wrap {
+    overflow: visible;
+  }
+
+  #equipmentPanel table,
+  #equipmentPanel thead,
+  #equipmentPanel tbody,
+  #equipmentPanel tr,
+  #equipmentPanel td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #equipmentPanel thead {
+    display: none;
+  }
+
+  #equipmentPanel tr {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 8px;
+    background: #fff;
+  }
+
+  #equipmentPanel td {
+    display: grid;
+    grid-template-columns: minmax(82px, 34%) 1fr;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid #eef2f4;
+  }
+
+  #equipmentPanel td:last-child {
+    border-bottom: 0;
+  }
+
+  #equipmentPanel td::before {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  #equipmentPanel td:nth-child(1)::before { content: "Ubicacion"; }
+  #equipmentPanel td:nth-child(2)::before { content: "Elemento"; }
+  #equipmentPanel td:nth-child(3)::before { content: "Cantidad"; }
+  #equipmentPanel td:nth-child(4)::before { content: "Condicion"; }
+  #equipmentPanel td:nth-child(5)::before { content: "Obs."; }
+
+  #equipmentPanel td:nth-child(1),
+  #equipmentPanel td:nth-child(2),
+  #equipmentPanel td:nth-child(3),
+  #equipmentPanel td:nth-child(4),
+  #equipmentPanel td:nth-child(5) {
+    width: 100%;
+  }
+
+  #equipmentPanel input,
+  #equipmentPanel select {
+    min-height: 36px;
+  }
+}
+
+#equipmentPanel table,
+#equipmentPanel .equipment-location table {
+  width: 100%;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+#equipmentPanel .table-wrap {
+  overflow-x: hidden !important;
 }

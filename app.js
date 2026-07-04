@@ -375,7 +375,7 @@ function renderBrigadeMetrics() {
   if (brigade) document.getElementById('selectedBrigadeTitle').textContent = brigade.nombre_brigada;
 }
 
-function renderEquipment() {
+function renderEquipmentLegacy() {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
   const realRows = getEquipamientoBrigada(state.selectedBrigade);
   const rows = realRows.length ? realRows : EQUIPMENT_EXAMPLES.map((item) => ({ ...item, brigada: brigade?.nombre_brigada }));
@@ -427,6 +427,48 @@ function renderEquipment() {
       </div>
     </section>
   `).join('');
+}
+
+function renderEquipment() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const realRows = getEquipamientoBrigada(state.selectedBrigade);
+  const rows = realRows.length ? realRows : EQUIPMENT_EXAMPLES.map((item) => ({ ...item, brigada: brigade?.nombre_brigada }));
+  const container = document.getElementById('equipmentContainer');
+  container.innerHTML = `${realRows.length ? '' : '<div class="notice">Ejemplos de carga. Para que sea real, carga la hoja EQUIPAMIENTO.</div>'}
+    <section class="equipment-location">
+      <h3>${escapeHtml(brigade?.nombre_brigada || 'Equipamiento')}</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ubicacion</th>
+              <th>Elemento</th>
+              <th>Cantidad</th>
+              <th>Condicion</th>
+              <th>Observaciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((item) => `
+              <tr data-equipment-row="1">
+                <td>${escapeHtml(item.ubicacion || '')}</td>
+                <td>${escapeHtml(item.elemento || '')}</td>
+                <td><input data-eq-field="cantidad" type="text" value="${escapeHtml(item.unidades || item.cantidad || '')}" placeholder="Cantidad"></td>
+                <td>
+                  <select data-eq-field="condicion">
+                    <option>Bueno</option>
+                    <option>Regular</option>
+                    <option>Malo</option>
+                  </select>
+                </td>
+                <td><input data-eq-field="obs" type="text" placeholder="Obs..."></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
 }
 
 function renderCertificates() {
@@ -928,6 +970,25 @@ function setButtonLoading(buttonId, loading, label) {
   }
 }
 
+async function downloadAndSharePdf(doc, filename, title) {
+  doc.save(filename);
+  const blob = doc.output('blob');
+  const file = new File([blob], filename, { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+    try {
+      await navigator.share({
+        title,
+        text: title,
+        files: [file],
+      });
+      return true;
+    } catch (error) {
+      console.warn('No se compartio el archivo', error);
+    }
+  }
+  return false;
+}
+
 async function generarPDFAsistencia(includeLoaded) {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
   const members = getIntegrantesBrigada(state.selectedBrigade);
@@ -1000,8 +1061,10 @@ async function generarPDFAsistencia(includeLoaded) {
     brigada: brigade.nombre_brigada,
     tipo_reporte: 'asistencia',
   });
-  doc.save(filename);
-  setBrigadeActionStatus('PDF generado y enviado al Web App. Revisar Drive en 01 Asistencias.');
+  const shared = await downloadAndSharePdf(doc, filename, `Asistencia ${brigade.nombre_brigada}`);
+  setBrigadeActionStatus(shared
+    ? 'PDF descargado, guardado y abierto para compartir.'
+    : 'PDF descargado y enviado al Web App. Si no se abrio compartir, este navegador no lo permite.');
   setButtonLoading('saveAttendanceButton', false);
 }
 
@@ -1032,47 +1095,28 @@ async function generarPDFCheckEquipamiento(uploadToDrive = true) {
   doc.setFontSize(9);
   doc.text(new Date().toLocaleString('es-AR'), 14, 20);
   doc.setTextColor(20, 32, 42);
-  let y = 36;
-  const grouped = new Map();
-  rows.forEach((item) => {
-    const key = item.ubicacion || 'Sin ubicacion';
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(item);
+  const body = rows.map((item, index) => {
+    const rowElement = document.querySelectorAll('[data-equipment-row]')[index];
+    const cantidad = rowElement?.querySelector('[data-eq-field="cantidad"]')?.value || item.unidades || item.cantidad || '';
+    const condicion = rowElement?.querySelector('[data-eq-field="condicion"]')?.value || item.estado_bueno_malo || 'Bueno';
+    const obs = rowElement?.querySelector('[data-eq-field="obs"]')?.value || item.observaciones || '';
+    return [item.ubicacion || '', item.elemento || '', cantidad, condicion, obs];
   });
-  Array.from(grouped, ([ubicacion, items]) => {
-    if (y > 230) {
-      doc.addPage();
-      y = 18;
-    }
-    doc.setFillColor(6, 52, 82);
-    doc.roundedRect(14, y, 182, 8, 1.5, 1.5, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.text(ubicacion, 17, y + 5.5);
-    doc.setTextColor(20, 32, 42);
-    const body = items.map((item, index) => {
-      const rowElement = document.querySelectorAll('[data-equipment-row]')[rows.indexOf(item)];
-      const cantidad = rowElement?.querySelector('[data-eq-field="cantidad"]')?.value || 'Bien';
-      const estado = rowElement?.querySelector('[data-eq-field="estado"]')?.value || 'Bueno';
-      const obs = rowElement?.querySelector('[data-eq-field="obs"]')?.value || '';
-      return [item.elemento || '', item.unidades || '', cantidad, estado, obs];
-    });
-    doc.autoTable({
-      startY: y + 10,
-      head: [['Elemento', 'Un.', 'Cantidad', 'Estado', 'Obs.']],
-      body,
-      styles: { fontSize: 8, cellPadding: 2.1 },
-      headStyles: { fillColor: [6, 52, 82], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [242, 246, 248] },
-      margin: { left: 14, right: 14 },
-      columnStyles: {
-        0: { cellWidth: 62 },
-        1: { cellWidth: 16, halign: 'center' },
-        2: { cellWidth: 28, halign: 'center' },
-        3: { cellWidth: 28, halign: 'center' },
-        4: { cellWidth: 48 },
-      },
-    });
-    y = doc.lastAutoTable.finalY + 9;
+  doc.autoTable({
+    startY: 36,
+    head: [['Ubicacion', 'Elemento', 'Cantidad', 'Condicion', 'Observaciones']],
+    body,
+    styles: { fontSize: 8, cellPadding: 2.1 },
+    headStyles: { fillColor: [6, 52, 82], textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: [242, 246, 248] },
+    margin: { left: 14, right: 14 },
+    columnStyles: {
+      0: { cellWidth: 42 },
+      1: { cellWidth: 52 },
+      2: { cellWidth: 24, halign: 'center' },
+      3: { cellWidth: 28, halign: 'center' },
+      4: { cellWidth: 36 },
+    },
   });
   const filename = `check-equipamiento-${brigade.id_brigada}-${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = doc.output('datauristring').split(',')[1];
@@ -1087,8 +1131,10 @@ async function generarPDFCheckEquipamiento(uploadToDrive = true) {
       tipo_reporte: 'equipamiento',
     });
   }
-  doc.save(filename);
-  setBrigadeActionStatus(uploadToDrive ? 'PDF de equipamiento generado y enviado al Web App. Revisar Drive en 02 Equipamiento.' : 'PDF de equipamiento descargado.');
+  const shared = await downloadAndSharePdf(doc, filename, `Check de equipamiento ${brigade.nombre_brigada}`);
+  setBrigadeActionStatus(shared
+    ? 'PDF descargado, guardado y abierto para compartir.'
+    : (uploadToDrive ? 'PDF descargado y enviado al Web App. Si no se abrio compartir, este navegador no lo permite.' : 'PDF de equipamiento descargado.'));
   setButtonLoading(uploadToDrive ? 'saveEquipmentCheckButton' : 'downloadEquipmentPdfButton', false);
 }
 
