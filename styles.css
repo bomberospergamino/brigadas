@@ -255,10 +255,11 @@ p { color: var(--muted); margin-top: 4px; }
 
 .brigade-card {
   min-height: 168px;
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   color: var(--ink);
   text-align: center;
@@ -272,6 +273,10 @@ p { color: var(--muted); margin-top: 4px; }
   transform: translateY(-1px);
   border-color: rgba(6,52,82,.42);
   box-shadow: 0 14px 34px rgba(6,52,82,.17);
+}
+
+.brigade-card > div {
+  text-align: center;
 }
 
 .brigade-card.active {
@@ -304,19 +309,23 @@ p { color: var(--muted); margin-top: 4px; }
 }
 
 .brigade-menu {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  display: flex;
+  gap: 6px;
   padding: 14px;
   border-top: 1px solid var(--line);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .brigade-menu button {
-  min-height: 62px;
-  text-align: left;
+  flex: 0 0 auto;
+  min-height: 42px;
+  text-align: center;
   font-weight: 850;
   color: var(--navy);
   background: #f7fbfd;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .brigade-menu button.active {
@@ -352,6 +361,19 @@ p { color: var(--muted); margin-top: 4px; }
 
 .simple-item strong {
   color: var(--navy);
+}
+
+.bibliography-button {
+  min-height: 54px;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+  font-weight: 900;
+}
+
+.bibliography-button:hover {
+  border-color: var(--red);
+  background: #fff7f7;
 }
 
 .count-footer {
@@ -593,22 +615,36 @@ td input[type="radio"] {
 }
 
 .event-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
   color: #fff;
-  border-radius: 5px;
-  padding: 4px 6px;
+  border-radius: 8px;
+  padding: 5px;
   font-size: 12px;
   margin-top: 5px;
+  min-width: 58px;
+  min-height: 52px;
 }
 
 .event-pill img {
-  width: 28px;
-  height: 28px;
+  width: 48px;
+  height: 48px;
   object-fit: contain;
   border-radius: 4px;
   background: #fff;
+}
+
+.event-pill .event-hour {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.72);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .event-pill.programado { background: #1d68b3; }
@@ -740,7 +776,7 @@ td input[type="radio"] {
   }
 
   .brigade-card {
-    grid-template-columns: 74px 1fr;
+    flex-direction: column;
   }
 
   .calendar-grid {

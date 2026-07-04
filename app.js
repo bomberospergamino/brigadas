@@ -25,12 +25,24 @@ const BRIGADES_FALLBACK = [
   { id_brigada: 'socorrismo', nombre_brigada: 'Socorrismo', columna_personal: 'socorrismo', logo_file: 'socorrismo_logo.jpeg', color: '#E85D04', activa: 'SI', orden: 6 },
   { id_brigada: 'brec', nombre_brigada: 'BREC', columna_personal: 'brec', logo_file: 'brec_logo.jpeg', color: '#6C584C', activa: 'SI', orden: 7 },
 ];
+const EQUIPMENT_EXAMPLES = [
+  { ubicacion: 'Móvil / Depósito', elemento: 'Bolso operativo', unidades: '1', cantidad_ok_no: 'OK', estado_bueno_malo: 'BUENO', observaciones: 'Ejemplo de carga' },
+  { ubicacion: 'Móvil / Depósito', elemento: 'Guantes de trabajo', unidades: '4 pares', cantidad_ok_no: 'OK', estado_bueno_malo: 'BUENO', observaciones: 'Ejemplo de carga' },
+];
+
+const MATPEL_BIBLIOGRAPHY = [
+  { label: 'General', url: 'https://drive.google.com/drive/folders/1Jn3Zg-V2umhoep5QKUiO3SPoiXm3VZUQ?usp=sharing' },
+  { label: 'Identificacion', url: 'https://drive.google.com/drive/folders/1RLG5BTS_p_zFKUS3ye8ZhytzGvplL_QW?usp=drive_link' },
+  { label: 'Material complementario', url: 'https://drive.google.com/drive/folders/17g4oBDcsGCvQXkPuojPtZvTVVnx-7ECp?usp=drive_link' },
+];
 
 const state = {
   sheets: {},
   selectedBrigade: 'rescate_acuatico',
   calendarDate: new Date(),
   adminMonth: monthKey(new Date()),
+  adminDateFrom: '',
+  adminDateTo: '',
   currentFileName: '',
   localMeetings: [],
   editingEventId: '',
@@ -66,13 +78,15 @@ function bindEvents() {
   document.getElementById('downloadLogoButton').addEventListener('click', descargarLogoBrigada);
   document.getElementById('saveAttendanceButton').addEventListener('click', () => generarPDFAsistencia(true));
   document.getElementById('saveEquipmentCheckButton').addEventListener('click', generarPDFCheckEquipamiento);
+  document.getElementById('downloadEquipmentPdfButton').addEventListener('click', () => generarPDFCheckEquipamiento(false));
+  document.getElementById('downloadEquipmentExcelButton').addEventListener('click', descargarEquipamientoExcel);
   document.getElementById('sendCertificateButton').addEventListener('click', enviarCertificado);
   document.querySelectorAll('[data-brigade-panel]').forEach((button) => {
     button.addEventListener('click', () => openBrigadePanel(button.dataset.brigadePanel));
   });
   document.getElementById('exportCsvButton').addEventListener('click', exportAdminCsv);
   document.getElementById('exportAdminPdfButton').addEventListener('click', exportAdminPdf);
-  ['adminMonth', 'adminBrigadeFilter', 'adminStateFilter', 'onlyMissingFilter', 'onlyHighFilter'].forEach((id) => {
+  ['adminDateFrom', 'adminDateTo', 'adminBrigadeFilter', 'adminStateFilter', 'onlyMissingFilter', 'onlyHighFilter'].forEach((id) => {
     document.getElementById(id).addEventListener('change', renderAdmin);
   });
 }
@@ -101,7 +115,10 @@ async function loadGoogleSheet() {
   if (!window.XLSX) return;
   setDataStatus('Leyendo Google Sheets...');
   try {
-    const response = await fetch(`${GOOGLE_SHEET_EXPORT_URL}&cacheBust=${Date.now()}`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch(`${GOOGLE_SHEET_EXPORT_URL}&cacheBust=${Date.now()}`, { signal: controller.signal });
+    clearTimeout(timer);
     if (!response.ok) {
       throw new Error(`Google Sheets respondio ${response.status}`);
     }
@@ -360,19 +377,16 @@ function renderBrigadeMetrics() {
 
 function renderEquipment() {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
-  const rows = getEquipamientoBrigada(state.selectedBrigade);
+  const realRows = getEquipamientoBrigada(state.selectedBrigade);
+  const rows = realRows.length ? realRows : EQUIPMENT_EXAMPLES.map((item) => ({ ...item, brigada: brigade?.nombre_brigada }));
   const container = document.getElementById('equipmentContainer');
-  if (!rows.length) {
-    container.innerHTML = '<div class="notice">No hay equipamiento cargado para esta brigada. Cargalo en la hoja EQUIPAMIENTO.</div>';
-    return;
-  }
   const grouped = new Map();
   rows.forEach((row) => {
     const key = row.ubicacion || 'Sin ubicacion';
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(row);
   });
-  container.innerHTML = Array.from(grouped, ([ubicacion, items]) => `
+  container.innerHTML = `${realRows.length ? '' : '<div class="notice">Ejemplos de carga. Para que sea real, cargá la hoja EQUIPAMIENTO.</div>'}` + Array.from(grouped, ([ubicacion, items]) => `
     <section class="equipment-location">
       <h3>${escapeHtml(ubicacion)}</h3>
       <div class="table-wrap">
@@ -426,12 +440,22 @@ function renderCertificates() {
 
 function renderBibliography() {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
-  const raw = brigade?.bibliografia_url || brigade?.link_bibliografia || brigade?.bibliografia || '';
-  const links = String(raw).split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+  const links = getBibliographyItems(brigade);
   const container = document.getElementById('bibliographyLinks');
   container.innerHTML = links.length
-    ? links.map((link, index) => `<a class="simple-item" href="${escapeHtml(link)}" target="_blank" rel="noreferrer"><strong>Material ${index + 1}</strong><span>${escapeHtml(link)}</span></a>`).join('')
+    ? links.map((item) => `<a class="simple-item bibliography-button" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.label)}</strong></a>`).join('')
     : '<div class="simple-item"><strong>Material 1</strong><span>Pendiente de link</span></div><div class="simple-item"><strong>Material 2</strong><span>Pendiente de link</span></div>';
+}
+
+function getBibliographyItems(brigade) {
+  if (brigade?.id_brigada === 'mat_pel') return MATPEL_BIBLIOGRAPHY;
+  const raw = brigade?.bibliografia_url || brigade?.link_bibliografia || brigade?.bibliografia || '';
+  return String(raw).split(/[\n,]+/).map((item, index) => {
+    const text = item.trim();
+    if (!text) return null;
+    const parts = text.split('|').map((part) => part.trim()).filter(Boolean);
+    return parts.length >= 2 ? { label: parts[0], url: parts.slice(1).join('|') } : { label: `Material ${index + 1}`, url: text };
+  }).filter(Boolean);
 }
 
 function renderCalendar() {
@@ -479,7 +503,7 @@ function renderCalendarInto({ gridId, titleId, counterId, missingId, selectedMon
       pill.className = `event-pill ${normalizeState(meeting.estado)}`;
       const brigade = getBrigadasActivas().find((item) => item.id_brigada === meeting.id_brigada);
       const hour = meeting.hora_inicio || '';
-      pill.innerHTML = `<img src="${logoPath(brigade || {})}" alt=""><span>${escapeHtml(hour)}</span>`;
+      pill.innerHTML = `<img src="${logoPath(brigade || {})}" alt=""><span class="event-hour">${escapeHtml(hour)}</span>`;
       cell.appendChild(pill);
     });
     grid.appendChild(cell);
@@ -493,10 +517,15 @@ function renderCalendarInto({ gridId, titleId, counterId, missingId, selectedMon
 }
 
 function setupAdminFilters() {
-  const month = document.getElementById('adminMonth');
+  const dateFrom = document.getElementById('adminDateFrom');
+  const dateTo = document.getElementById('adminDateTo');
   const brigade = document.getElementById('adminBrigadeFilter');
   const status = document.getElementById('adminStateFilter');
-  month.value = state.adminMonth;
+  const range = getDefaultAdminRange();
+  if (!state.adminDateFrom) state.adminDateFrom = range.from;
+  if (!state.adminDateTo) state.adminDateTo = range.to;
+  dateFrom.value = state.adminDateFrom;
+  dateTo.value = state.adminDateTo;
   brigade.innerHTML = '<option value="">Todas</option>';
   getBrigadasActivas().forEach((item) => brigade.add(new Option(item.nombre_brigada, item.id_brigada)));
   status.innerHTML = '<option value="">Todos</option><option>OK</option><option>Observado</option><option>Critico</option>';
@@ -512,9 +541,11 @@ function setupScheduleOptions() {
 }
 
 function renderAdmin() {
-  state.adminMonth = document.getElementById('adminMonth').value || monthKey(new Date());
-  const summary = calcularResumenAdmin(state.adminMonth).filter(filterAdminRow);
-  const kpis = calculateKpis(calcularResumenAdmin(state.adminMonth));
+  state.adminDateFrom = document.getElementById('adminDateFrom').value || getDefaultAdminRange().from;
+  state.adminDateTo = document.getElementById('adminDateTo').value || getDefaultAdminRange().to;
+  const fullSummary = calcularResumenAdminRango(state.adminDateFrom, state.adminDateTo);
+  const summary = fullSummary.filter(filterAdminRow);
+  const kpis = calculateKpis(fullSummary);
   document.getElementById('adminKpis').innerHTML = [
     ['Brigadas activas', kpis.active],
     ['Encuentros cubiertos este mes', `${kpis.covered} / ${kpis.active}`],
@@ -541,13 +572,12 @@ function renderAdmin() {
       <td><span class="badge ${row.estado_general.toLowerCase()}">${row.estado_general}</span></td>
     </tr>
   `).join('');
-  renderAlerts(calcularResumenAdmin(state.adminMonth));
+  renderAlerts(fullSummary);
   renderAdminEvents();
 }
 
 function renderAdminEvents() {
-  const month = document.getElementById('adminMonth').value || state.adminMonth;
-  const rows = getEncuentrosMes(month).sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  const rows = getEncuentrosRango(state.adminDateFrom, state.adminDateTo).sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
   document.getElementById('adminEventsTable').innerHTML = rows.map((event) => `
     <tr>
       <td>${escapeHtml(formatDateInput(event.fecha))}</td>
@@ -637,12 +667,11 @@ function findMeetingById(eventId) {
 }
 
 async function postToAppsScript(payload) {
-  const body = new URLSearchParams(payload);
   await fetch(APPS_SCRIPT_URL, {
     method: 'POST',
     mode: 'no-cors',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body,
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -707,6 +736,15 @@ function getEncuentrosMes(mes_periodo) {
   });
 }
 
+function getEncuentrosRango(from, to) {
+  const fromDate = parseDate(from) || new Date(1900, 0, 1);
+  const toDate = parseDate(to) || new Date();
+  return [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).filter((row) => {
+    const date = parseDate(row.fecha);
+    return date && date >= fromDate && date <= toDate;
+  });
+}
+
 function getBrigadasSinEncuentro(mes_periodo) {
   const meetings = getEncuentrosMes(mes_periodo).filter((meeting) => VALID_MEETING_STATES.has(normalizeState(meeting.estado)));
   return getBrigadasActivas().filter((brigade) => !meetings.some((meeting) => meeting.id_brigada === brigade.id_brigada));
@@ -743,6 +781,74 @@ function calcularResumenAdmin(mes_periodo) {
       ultima_actualizacion: new Date().toISOString(),
     };
   });
+}
+
+function calcularResumenAdminRango(from, to) {
+  const meetings = getEncuentrosRango(from, to);
+  return getBrigadasActivas().map((brigade) => {
+    const validMeetings = meetings.filter((meeting) => meeting.id_brigada === brigade.id_brigada && VALID_MEETING_STATES.has(normalizeState(meeting.estado)));
+    const attendance = calcularPorcentajeAsistenciaRango(brigade.id_brigada, from, to);
+    const needs = getNecesidadesPendientes(brigade.id_brigada);
+    const equipment = getEstadoEquipamientoRango(brigade.id_brigada, from, to);
+    let estado = 'OK';
+    if (!validMeetings.length || equipment.critical > 0) estado = 'Critico';
+    else if (attendance.total > 0 && attendance.percent < 75 || needs.pending > 0) estado = 'Observado';
+    return {
+      id_brigada: brigade.id_brigada,
+      brigada: brigade.nombre_brigada,
+      encuentros_validos_mes: validMeetings.length,
+      cumple_encuentro_mensual: validMeetings.length > 0,
+      cantidad_asistencias: attendance.records,
+      total_convocados: attendance.total,
+      total_presentes: attendance.present,
+      total_ausentes: attendance.absent,
+      total_justificados: attendance.justified,
+      porcentaje_asistencia: attendance.percent,
+      checks_equipamiento: equipment.total,
+      checks_ok: equipment.ok,
+      checks_observados: equipment.observed,
+      checks_criticos: equipment.critical,
+      necesidades_pendientes: needs.pending,
+      necesidades_alta_prioridad: needs.high,
+      estado_general: estado,
+    };
+  });
+}
+
+function calcularPorcentajeAsistenciaRango(id_brigada, from, to) {
+  const fromDate = parseDate(from) || new Date(1900, 0, 1);
+  const toDate = parseDate(to) || new Date();
+  const assistanceIds = (state.sheets.ASISTENCIAS || [])
+    .map(normalizeRow)
+    .filter((row) => {
+      const date = parseDate(row.fecha);
+      return row.id_brigada === id_brigada && date && date >= fromDate && date <= toDate;
+    })
+    .map((row) => row.id_asistencia)
+    .filter(Boolean);
+  const details = (state.sheets.DETALLE_ASISTENCIAS || []).map(normalizeRow).filter((row) => assistanceIds.includes(row.id_asistencia));
+  const present = details.filter((row) => normalizeState(row.estado_asistencia) === 'p').length;
+  const absent = details.filter((row) => normalizeState(row.estado_asistencia) === 'a').length;
+  const justified = details.filter((row) => normalizeState(row.estado_asistencia) === 'just.').length;
+  const total = present + absent + justified;
+  return { records: assistanceIds.length, present, absent, justified, total, percent: total ? Math.round((present / total) * 100) : 0 };
+}
+
+function getEstadoEquipamientoRango(id_brigada, from, to) {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === id_brigada);
+  const fromDate = parseDate(from) || new Date(1900, 0, 1);
+  const toDate = parseDate(to) || new Date();
+  const checks = (state.sheets.CHECK_EQUIPAMIENTO || []).map(normalizeRow).filter((row) => {
+    const sameBrigade = row.id_brigada === id_brigada || normalizeState(row.brigada) === normalizeState(brigade?.nombre_brigada);
+    const date = parseDate(row.fecha);
+    return sameBrigade && date && date >= fromDate && date <= toDate;
+  });
+  return {
+    total: checks.length,
+    ok: checks.filter((row) => normalizeState(row.cantidad_ok_no) === 'ok' && normalizeState(row.estado_bueno_malo) === 'bueno').length,
+    observed: checks.filter((row) => normalizeState(row.cantidad_ok_no) === 'no').length,
+    critical: checks.filter((row) => normalizeState(row.estado_bueno_malo) === 'malo').length,
+  };
 }
 
 function calcularPorcentajeAsistencia(id_brigada, mes_periodo) {
@@ -801,6 +907,27 @@ async function exportarCalendarioPNG() {
   link.click();
 }
 
+function setBrigadeActionStatus(message, type = 'info') {
+  const status = document.getElementById('brigadeActionStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('hidden', !message);
+  status.classList.toggle('error', type === 'error');
+}
+
+function setButtonLoading(buttonId, loading, label) {
+  const button = document.getElementById(buttonId);
+  if (!button) return;
+  if (loading) {
+    button.dataset.originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = label;
+  } else {
+    button.disabled = false;
+    if (button.dataset.originalText) button.innerHTML = button.dataset.originalText;
+  }
+}
+
 async function generarPDFAsistencia(includeLoaded) {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
   const members = getIntegrantesBrigada(state.selectedBrigade);
@@ -809,6 +936,8 @@ async function generarPDFAsistencia(includeLoaded) {
     alert('No se pudo cargar jsPDF.');
     return;
   }
+  setButtonLoading('saveAttendanceButton', true, 'Generando PDF...');
+  setBrigadeActionStatus('Generando PDF de asistencia...');
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const logo = await imageToDataUrl(logoPath(brigade));
   if (logo) {
@@ -862,6 +991,7 @@ async function generarPDFAsistencia(includeLoaded) {
   doc.line(135, 274, 196, 274);
   const filename = `asistencia-${brigade.id_brigada}-${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = doc.output('datauristring').split(',')[1];
+  setBrigadeActionStatus('PDF listo. Enviando a la carpeta de Drive...');
   await guardarReporteDrive({
     filename,
     mime_type: 'application/pdf',
@@ -871,13 +1001,15 @@ async function generarPDFAsistencia(includeLoaded) {
     tipo_reporte: 'asistencia',
   });
   doc.save(filename);
+  setBrigadeActionStatus('PDF generado y enviado al Web App. Revisar Drive en 01 Asistencias.');
+  setButtonLoading('saveAttendanceButton', false);
 }
 
 async function guardarReporteDrive(payload) {
   await postToAppsScript({ action: 'guardar_reporte', ...payload });
 }
 
-async function generarPDFCheckEquipamiento() {
+async function generarPDFCheckEquipamiento(uploadToDrive = true) {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
   const rows = getEquipamientoBrigada(state.selectedBrigade);
   if (!rows.length) {
@@ -886,6 +1018,8 @@ async function generarPDFCheckEquipamiento() {
   }
   const jsPDF = window.jspdf?.jsPDF;
   if (!jsPDF) return alert('No se pudo cargar jsPDF.');
+  setButtonLoading(uploadToDrive ? 'saveEquipmentCheckButton' : 'downloadEquipmentPdfButton', true, 'Generando PDF...');
+  setBrigadeActionStatus(uploadToDrive ? 'Generando check de equipamiento...' : 'Preparando descarga de inventario...');
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   doc.setFillColor(6, 52, 82);
   doc.rect(0, 0, 210, 28, 'F');
@@ -942,15 +1076,36 @@ async function generarPDFCheckEquipamiento() {
   });
   const filename = `check-equipamiento-${brigade.id_brigada}-${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = doc.output('datauristring').split(',')[1];
-  await guardarReporteDrive({
-    filename,
-    mime_type: 'application/pdf',
-    base64,
-    id_brigada: brigade.id_brigada,
-    brigada: brigade.nombre_brigada,
-    tipo_reporte: 'equipamiento',
-  });
+  if (uploadToDrive) {
+    setBrigadeActionStatus('Check listo. Enviando a la carpeta de Drive...');
+    await guardarReporteDrive({
+      filename,
+      mime_type: 'application/pdf',
+      base64,
+      id_brigada: brigade.id_brigada,
+      brigada: brigade.nombre_brigada,
+      tipo_reporte: 'equipamiento',
+    });
+  }
   doc.save(filename);
+  setBrigadeActionStatus(uploadToDrive ? 'PDF de equipamiento generado y enviado al Web App. Revisar Drive en 02 Equipamiento.' : 'PDF de equipamiento descargado.');
+  setButtonLoading(uploadToDrive ? 'saveEquipmentCheckButton' : 'downloadEquipmentPdfButton', false);
+}
+
+function descargarEquipamientoExcel() {
+  const brigade = getBrigadasActivas().find((item) => item.id_brigada === state.selectedBrigade);
+  const rows = getEquipamientoBrigada(state.selectedBrigade);
+  const data = rows.length ? rows : EQUIPMENT_EXAMPLES.map((item) => ({ ...item, brigada: brigade?.nombre_brigada }));
+  const headers = ['brigada', 'ubicacion', 'elemento', 'unidades', 'cantidad_ok_no', 'estado_bueno_malo', 'observaciones'];
+  if (window.XLSX) {
+    const sheet = XLSX.utils.json_to_sheet(data.map((row) => Object.fromEntries(headers.map((key) => [key, row[key] || '']))));
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Equipamiento');
+    XLSX.writeFile(book, `equipamiento-${brigade.id_brigada}.xlsx`);
+    return;
+  }
+  const csv = [headers.join(','), ...data.map((row) => headers.map((key) => csvCell(row[key])).join(','))].join('\n');
+  downloadBlob(csv, `equipamiento-${brigade.id_brigada}.csv`, 'text/csv;charset=utf-8');
 }
 
 async function enviarCertificado() {
@@ -961,7 +1116,10 @@ async function enviarCertificado() {
   if (!memberValue) return alert('Seleccioná un integrante.');
   if (!title) return alert('Completá el nombre de la capacitación.');
   if (!file) return alert('Adjuntá el certificado.');
+  setButtonLoading('sendCertificateButton', true, 'Enviando...');
+  setBrigadeActionStatus('Leyendo certificado y preparando envio a Drive...');
   const dataUrl = await fileToDataUrl(file);
+  setBrigadeActionStatus('Enviando certificado a la carpeta de Drive...');
   await postToAppsScript({
     action: 'guardar_certificado',
     filename: file.name,
@@ -972,7 +1130,8 @@ async function enviarCertificado() {
     integrante: memberValue,
     titulo: title,
   });
-  alert('Certificado enviado para legajo personal.');
+  setBrigadeActionStatus('Certificado enviado al Web App. Revisar Drive en 03 Certificaciones.');
+  setButtonLoading('sendCertificateButton', false);
   document.getElementById('certificateTitle').value = '';
   document.getElementById('certificateFile').value = '';
 }
@@ -1032,6 +1191,17 @@ function calculateKpis(summary) {
     highNeeds: summary.reduce((sum, row) => sum + row.necesidades_alta_prioridad, 0),
     criticalChecks: summary.reduce((sum, row) => sum + row.checks_criticos, 0),
   };
+}
+
+function getDefaultAdminRange() {
+  const dates = [
+    ...(state.sheets.ENCUENTROS || []).map((row) => parseDate(normalizeRow(row).fecha)),
+    ...(state.sheets.ASISTENCIAS || []).map((row) => parseDate(normalizeRow(row).fecha)),
+    ...(state.sheets.CHECK_EQUIPAMIENTO || []).map((row) => parseDate(normalizeRow(row).fecha)),
+  ].filter(Boolean).sort((a, b) => a - b);
+  const from = dates[0] || new Date(new Date().getFullYear(), 0, 1);
+  const to = new Date();
+  return { from: formatDateInput(from), to: formatDateInput(to) };
 }
 
 function changeMonth(delta) {
