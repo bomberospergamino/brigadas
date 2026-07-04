@@ -7,7 +7,7 @@ const BRIGADAS_CONFIG = [
   ['rescate_acuatico', 'Rescate acuatico', 'rescate_acuatico', 'rescateacuatico_logo.jpeg', '#0077B6', 'SI', 1, 1, '', '', ''],
   ['buceo', 'Buceo', 'buceo', 'buceo_logo.jpeg', '#003566', 'SI', 2, 1, '', '', ''],
   ['k9', 'K9', 'k9', 'k9_logo.jpeg', '#D00000', 'SI', 3, 1, '', '', ''],
-  ['mat_pel', 'Mat Pel', 'mat_pel', 'matpel_logo.jpeg', '#70E000', 'SI', 4, 1, '', '', ''],
+  ['mat_pel', 'Mat Pel', 'mat_pel', 'matpel_logo.jpeg', '#70E000', 'SI', 4, 1, '', 'General|https://drive.google.com/drive/folders/1Jn3Zg-V2umhoep5QKUiO3SPoiXm3VZUQ?usp=sharing\nIdentificacion|https://drive.google.com/drive/folders/1RLG5BTS_p_zFKUS3ye8ZhytzGvplL_QW?usp=drive_link\nMaterial complementario|https://drive.google.com/drive/folders/17g4oBDcsGCvQXkPuojPtZvTVVnx-7ECp?usp=drive_link', ''],
   ['altura', 'Altura', 'altura', 'altura_logo.jpeg', '#B5179E', 'SI', 5, 1, '', '', ''],
   ['socorrismo', 'Socorrismo', 'socorrismo', 'socorrismo_logo.jpeg', '#E85D04', 'SI', 6, 1, '', '', ''],
   ['brec', 'BREC', 'brec', 'brec_logo.jpeg', '#6C584C', 'SI', 7, 1, '', '', ''],
@@ -191,7 +191,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const params = e && e.parameter ? e.parameter : {};
+    const params = parsePostParams_(e);
     if (params.action === 'programar_encuentro') {
       const result = programarEncuentro_(params);
       return jsonResponse_({ ok: true, result });
@@ -216,6 +216,17 @@ function doPost(e) {
   } catch (error) {
     return jsonResponse_({ ok: false, error: error.message || String(error) });
   }
+}
+
+function parsePostParams_(e) {
+  if (e && e.postData && e.postData.contents) {
+    try {
+      return JSON.parse(e.postData.contents);
+    } catch (error) {
+      // Sigue con e.parameter para formularios viejos.
+    }
+  }
+  return e && e.parameter ? e.parameter : {};
 }
 
 function programarEncuentro_(params) {
@@ -305,20 +316,21 @@ function findRowById_(sheet, idHeader, idValue) {
 
 function guardarReporte_(params) {
   const root = DriveApp.getFolderById(REPORTES_DRIVE_FOLDER_ID);
-  const brigadeName = params.brigada || params.id_brigada || 'Brigada';
-  const brigadeFolder = getOrCreateFolder_(root, brigadeName);
+  const brigadeFolder = getBrigadeFolder_(root, params.brigada || params.id_brigada || 'Brigada');
   const reportType = params.tipo_reporte || 'reportes';
-  const reportFolder = getOrCreateFolder_(brigadeFolder, reportType);
+  const typeFolderName = reportType === 'asistencia' ? '01 Asistencias' : reportType === 'equipamiento' ? '02 Equipamiento' : 'Reportes';
+  const typeFolder = getOrCreateFolder_(brigadeFolder, typeFolderName);
+  const monthFolder = getOrCreateFolder_(typeFolder, Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM'));
   const bytes = Utilities.base64Decode(params.base64 || '');
   const blob = Utilities.newBlob(bytes, params.mime_type || 'application/pdf', params.filename || `reporte-${Date.now()}.pdf`);
-  const file = reportFolder.createFile(blob);
+  const file = monthFolder.createFile(blob);
   return { file_id: file.getId(), url: file.getUrl(), name: file.getName() };
 }
 
 function guardarCertificado_(params) {
   const root = DriveApp.getFolderById(REPORTES_DRIVE_FOLDER_ID);
-  const brigadeFolder = getOrCreateFolder_(root, params.brigada || params.id_brigada || 'Brigada');
-  const certificatesFolder = getOrCreateFolder_(brigadeFolder, 'certificaciones');
+  const brigadeFolder = getBrigadeFolder_(root, params.brigada || params.id_brigada || 'Brigada');
+  const certificatesFolder = getOrCreateFolder_(brigadeFolder, '03 Certificaciones');
   const memberFolder = getOrCreateFolder_(certificatesFolder, String(params.integrante || 'sin_identificar'));
   const bytes = Utilities.base64Decode(params.base64 || '');
   const safeTitle = String(params.titulo || 'certificado').replace(/[\\/:*?"<>|]/g, '_');
@@ -326,6 +338,22 @@ function guardarCertificado_(params) {
   const blob = Utilities.newBlob(bytes, params.mime_type || 'application/octet-stream', safeTitle + ' - ' + originalName);
   const file = memberFolder.createFile(blob);
   return { file_id: file.getId(), url: file.getUrl(), name: file.getName() };
+}
+
+function getBrigadeFolder_(root, brigadeName) {
+  const normalized = normalizeHeader_(brigadeName).replace(/_/g, ' ');
+  const knownNames = {
+    'brec': 'BRIGADA BREC',
+    'buceo': 'BRIGADA DE BUCEO',
+    'k9': 'BRIGADA K9',
+    'mat pel': 'BRIGADA MAT PEL',
+    'rescate acuatico': 'BRIGADA RESCATE ACUÁTICO',
+    'altura': 'BRIGADA RESCATE EN ALTURA',
+    'rescate en altura': 'BRIGADA RESCATE EN ALTURA',
+    'socorrismo': 'BRIGADA SOCORRISMO',
+  };
+  const folderName = knownNames[normalized] || ('BRIGADA ' + String(brigadeName).toUpperCase());
+  return getOrCreateFolder_(root, folderName);
 }
 
 function getOrCreateFolder_(parent, name) {
@@ -447,6 +475,7 @@ function compactSheet_(sheet, targetHeaders) {
     const exact = headers.indexOf(target);
     if (exact >= 0) return exact;
     if (target === 'ubicacion') return headers.findIndex((header) => header.indexOf('ubicacion') >= 0);
+    if (target === 'unidades') return headers.findIndex((header) => header === 'un' || header.indexOf('unidad') >= 0 || header.indexOf('unidades') >= 0);
     if (target === 'cantidad_ok_no') return headers.findIndex((header) => header.indexOf('cantidad') >= 0);
     if (target === 'estado_bueno_malo') return headers.findIndex((header) => header.indexOf('estado') >= 0);
     return -1;
@@ -473,21 +502,32 @@ function upsertRows_(sheet, rows, keyColumns) {
 function fixConfigBrigadas_(sheet) {
   const headers = getHeaderMap_(sheet);
   const expected = {};
-  BRIGADAS_CONFIG.forEach((row) => expected[row[0]] = row[2]);
+  BRIGADAS_CONFIG.forEach((row) => expected[row[0]] = row);
   for (let r = 2; r <= sheet.getLastRow(); r++) {
     const id = sheet.getRange(r, headers.id_brigada).getValue();
-    if (expected[id]) sheet.getRange(r, headers.columna_personal).setValue(expected[id]);
+    if (!expected[id]) continue;
+    sheet.getRange(r, headers.columna_personal).setValue(expected[id][2]);
+    if (headers.bibliografia_url && expected[id][9]) sheet.getRange(r, headers.bibliografia_url).setValue(expected[id][9]);
   }
 }
 
 function setupPersonalDefaults_(sheet) {
   const headers = getHeaderMap_(sheet);
-  for (let r = 2; r <= sheet.getLastRow(); r++) {
-    if (headers.id_persona && headers.legajo && !sheet.getRange(r, headers.id_persona).getValue()) {
-      sheet.getRange(r, headers.id_persona).setValue(sheet.getRange(r, headers.legajo).getValue());
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  let changed = false;
+  values.forEach((row) => {
+    if (headers.id_persona && headers.legajo && !row[headers.id_persona - 1] && row[headers.legajo - 1]) {
+      row[headers.id_persona - 1] = row[headers.legajo - 1];
+      changed = true;
     }
-    if (headers.activo && !sheet.getRange(r, headers.activo).getValue()) sheet.getRange(r, headers.activo).setValue('SI');
-  }
+    if (headers.activo && !row[headers.activo - 1]) {
+      row[headers.activo - 1] = 'SI';
+      changed = true;
+    }
+  });
+  if (changed) sheet.getRange(2, 1, values.length, values[0].length).setValues(values);
 }
 
 function formatSheet_(sheet) {
@@ -496,18 +536,21 @@ function formatSheet_(sheet) {
   sheet.getRange(1, 1, 1, maxCol).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#7A1113').setHorizontalAlignment('center');
   if (sheet.getFilter()) sheet.getFilter().remove();
   sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), maxCol).createFilter();
-  sheet.autoResizeColumns(1, maxCol);
+  sheet.setColumnWidths(1, maxCol, 150);
 }
 
 function applyValidations_(ss) {
+  const brigadeNames = BRIGADAS_CONFIG.map((b) => b[1]);
   setListValidation_(ss.getSheetByName('PERSONAL'), 'activo', ['SI', 'NO']);
   BRIGADAS_CONFIG.forEach((b) => setListValidation_(ss.getSheetByName('PERSONAL'), b[2], ['x', 'X', 'SI']));
   setListValidation_(ss.getSheetByName('CONFIG_BRIGADAS'), 'activa', ['SI', 'NO']);
   setListValidation_(ss.getSheetByName('ENCUENTROS'), 'estado', ['Programado', 'Realizado', 'Suspendido', 'Reprogramado', 'Pendiente']);
   setListValidation_(ss.getSheetByName('ASISTENCIAS'), 'estado_registro', ['Borrador', 'Cerrado', 'Anulado']);
   setListValidation_(ss.getSheetByName('DETALLE_ASISTENCIAS'), 'estado_asistencia', ['P', 'A', 'Just.']);
+  setListValidation_(ss.getSheetByName('EQUIPAMIENTO'), 'brigada', brigadeNames);
   setListValidation_(ss.getSheetByName('EQUIPAMIENTO'), 'cantidad_ok_no', ['OK', 'NO']);
   setListValidation_(ss.getSheetByName('EQUIPAMIENTO'), 'estado_bueno_malo', ['BUENO', 'MALO']);
+  setListValidation_(ss.getSheetByName('CHECK_EQUIPAMIENTO'), 'brigada', brigadeNames);
   setListValidation_(ss.getSheetByName('CHECK_EQUIPAMIENTO'), 'cantidad_ok_no', ['OK', 'NO']);
   setListValidation_(ss.getSheetByName('CHECK_EQUIPAMIENTO'), 'estado_bueno_malo', ['BUENO', 'MALO']);
   setListValidation_(ss.getSheetByName('NECESIDADES'), 'prioridad', ['Alta', 'Media', 'Baja']);
@@ -519,13 +562,19 @@ function applyFormulas_(ss) {
     const sheet = ss.getSheetByName(name);
     const h = getHeaderMap_(sheet);
     if (!h.fecha || !h.mes_periodo) return;
-    for (let r = 2; r <= 500; r++) sheet.getRange(r, h.mes_periodo).setFormula(`=IF(${columnLetter_(h.fecha)}${r}<>"",TEXT(${columnLetter_(h.fecha)}${r},"yyyy-mm"),"")`);
+    const offset = h.fecha - h.mes_periodo;
+    sheet.getRange(2, h.mes_periodo, 499, 1).setFormulaR1C1(`=IF(RC[${offset}]<>"",TEXT(RC[${offset}],"yyyy-mm"),"")`);
   });
   const personal = ss.getSheetByName('PERSONAL');
   const h = getHeaderMap_(personal);
   if (h.cantidad_brigadas) {
-    const parts = BRIGADAS_CONFIG.map((b) => `IF(OR(LOWER(TRIM(${columnLetter_(h[b[2]])}2))="x",LOWER(TRIM(${columnLetter_(h[b[2]])}2))="si"),1,0)`);
-    for (let r = 2; r <= 500; r++) personal.getRange(r, h.cantidad_brigadas).setFormula('=' + parts.join('+').replaceAll('2', String(r)));
+    const parts = BRIGADAS_CONFIG
+      .filter((b) => h[b[2]])
+      .map((b) => {
+        const offset = h[b[2]] - h.cantidad_brigadas;
+        return `IF(OR(LOWER(TRIM(RC[${offset}]))="x",LOWER(TRIM(RC[${offset}]))="si"),1,0)`;
+      });
+    if (parts.length) personal.getRange(2, h.cantidad_brigadas, 499, 1).setFormulaR1C1('=' + parts.join('+'));
   }
 }
 
