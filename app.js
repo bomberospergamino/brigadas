@@ -1,8 +1,8 @@
 ﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
-const APP_VERSION = 'brigadas-calendario-9';
+const APP_VERSION = 'brigadas-calendario-13';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyLv47WN0kWtizeiN4ssvq9F25v5xLw879lGAyxPhIROCjf5mv9z_LysiIqNBySfo3fVg/exec';
 const GOOGLE_SHEET_NAMES = [
   'CONFIG_BRIGADAS',
   'PERSONAL',
@@ -699,17 +699,17 @@ async function handleScheduleSubmit(event) {
     estado: 'Programado',
     observaciones: 'Cargado desde modulo Brigadas',
   };
-  upsertLocalMeeting(payload);
-  renderCalendar();
-  renderAdmin();
   const message = document.getElementById('scheduleMessage');
   message.textContent = 'Guardando reunion en Google Sheets...';
   message.classList.remove('hidden');
   try {
     const result = await postToAppsScript(payload);
+    upsertLocalMeeting(payload);
+    renderCalendar();
+    renderAdmin();
     message.textContent = result?.confirmed === false
-      ? 'Reunion enviada. Si no aparece al refrescar, revisar permisos del Web App.'
-      : 'Reunion agendada y guardada en Google Sheets.';
+      ? '✓ Reunion enviada. Actualizando calendario desde Sheets...'
+      : '✓ Reunion agendada y guardada en Google Sheets.';
     setTimeout(async () => {
       document.getElementById('scheduleDialog').close();
       await refreshFromSheetsAfterSchedule(payload.id_encuentro);
@@ -720,7 +720,7 @@ async function handleScheduleSubmit(event) {
     saveStoredMeetings();
     renderCalendar();
     renderAdmin();
-    message.textContent = 'No se pudo guardar en Google Sheets. Revisar que el Web App tenga acceso para cualquier persona.';
+    message.textContent = 'No pude confirmar el guardado, pero el envio fue disparado. Toca Actualizar Sheets para verificar.';
   }
 }
 
@@ -817,30 +817,45 @@ function openCalendarSaveWindow(payload) {
   }
 }
 
-function sendCalendarAction(payload) {
+async function sendCalendarAction(payload) {
   const url = buildAppsScriptUrl(payload);
-  const healthUrl = new URL(APPS_SCRIPT_URL);
-  healthUrl.searchParams.set('action', 'health');
-  return loadJsonp(url)
-    .then((result) => {
-      if (!result || result.ok !== true) {
-        throw new Error(result?.error || 'No se pudo guardar en Google Sheets');
+  try {
+    const result = await loadJsonp(url);
+    if (!result || result.ok !== true) {
+      throw new Error(result?.error || 'No se pudo guardar en Google Sheets');
+    }
+    return { ...result, confirmed: true };
+  } catch (error) {
+    console.warn('No se pudo confirmar por JSONP directo. Intentando envio invisible y lectura de control.', error);
+    submitAppsScriptForm(payload);
+    const confirmed = await waitForCalendarWrite(payload);
+    if (confirmed) return { ok: true, confirmed: true, fallback: true };
+    return { ok: true, confirmed: false, fallback: true };
+  }
+}
+
+async function waitForCalendarWrite(payload) {
+  const eventId = payload.id_encuentro;
+  if (!eventId) return false;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    try {
+      const data = await loadJsonp(`${APPS_SCRIPT_URL}?action=read_all&cacheBust=${Date.now()}`);
+      const meetings = (data?.sheets?.ENCUENTROS || []).map(normalizeRow);
+      const exists = meetings.some((row) => row.id_encuentro === eventId);
+      if (payload.action === 'eliminar_encuentro') return !exists;
+      if (exists) {
+        state.sheets = data.sheets;
+        clearSyncedLocalMeetings();
+        renderCalendar();
+        renderAdmin();
+        return true;
       }
-      return { ...result, confirmed: true };
-    })
-    .catch(async (error) => {
-      console.warn('No se pudo confirmar por JSONP. Intentando POST sin confirmacion.', error);
-      try {
-        const health = await loadJsonp(healthUrl.toString());
-        if (health?.ok && health.calendar_get_actions !== true) {
-          console.warn('El Web App responde, pero parece una version anterior sin calendario confirmable.', health);
-        }
-      } catch (healthError) {
-        console.warn('No se pudo leer health del Web App.', healthError);
-      }
-      submitAppsScriptForm(payload);
-      return { ok: true, confirmed: false };
-    });
+    } catch (error) {
+      console.warn('No se pudo confirmar escritura en intento', attempt + 1, error);
+    }
+  }
+  return false;
 }
 
 function submitAppsScriptForm(payload) {
