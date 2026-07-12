@@ -1,6 +1,6 @@
 ﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
-const APP_VERSION = 'brigadas-calendario-13';
+const APP_VERSION = 'brigadas-calendario-14';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyLv47WN0kWtizeiN4ssvq9F25v5xLw879lGAyxPhIROCjf5mv9z_LysiIqNBySfo3fVg/exec';
 const GOOGLE_SHEET_NAMES = [
@@ -682,6 +682,7 @@ function openScheduleDialog(eventId = '') {
 
 async function handleScheduleSubmit(event) {
   event.preventDefault();
+  const submitButton = document.getElementById('scheduleSubmit');
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === document.getElementById('scheduleBrigade').value);
   const payload = {
     action: state.editingEventId ? 'editar_encuentro' : 'programar_encuentro',
@@ -700,27 +701,28 @@ async function handleScheduleSubmit(event) {
     observaciones: 'Cargado desde modulo Brigadas',
   };
   const message = document.getElementById('scheduleMessage');
-  message.textContent = 'Guardando reunion en Google Sheets...';
-  message.classList.remove('hidden');
+  message.classList.add('hidden');
+  submitButton.disabled = true;
+  document.getElementById('scheduleDialog').close();
+  showAppToast('Guardando reunion en Google Sheets...', 'loading', 0);
   try {
     const result = await postToAppsScript(payload);
     upsertLocalMeeting(payload);
     renderCalendar();
     renderAdmin();
-    message.textContent = result?.confirmed === false
+    showAppToast(result?.confirmed === false
       ? '✓ Reunion enviada. Actualizando calendario desde Sheets...'
-      : '✓ Reunion agendada y guardada en Google Sheets.';
-    setTimeout(async () => {
-      document.getElementById('scheduleDialog').close();
-      await refreshFromSheetsAfterSchedule(payload.id_encuentro);
-    }, 900);
+      : '✓ Reunion agendada y guardada en Google Sheets.', 'success');
+    await refreshFromSheetsAfterSchedule(payload.id_encuentro);
   } catch (error) {
     console.warn(error);
     state.localMeetings = state.localMeetings.filter((row) => normalizeRow(row).id_encuentro !== payload.id_encuentro);
     saveStoredMeetings();
     renderCalendar();
     renderAdmin();
-    message.textContent = 'No pude confirmar el guardado, pero el envio fue disparado. Toca Actualizar Sheets para verificar.';
+    showAppToast('No pude confirmar el guardado, pero el envio fue disparado. Toca Actualizar Sheets para verificar.', 'warning', 6500);
+  } finally {
+    submitButton.disabled = false;
   }
 }
 
@@ -782,6 +784,21 @@ async function refreshFromSheetsAfterSchedule(expectedMeetingId = '') {
 
 function meetingExistsInSheet(eventId) {
   return (state.sheets.ENCUENTROS || []).map(normalizeRow).some((row) => row.id_encuentro === eventId);
+}
+
+let toastTimer = null;
+
+function showAppToast(message, type = 'info', duration = 3200) {
+  const toast = document.getElementById('appToast');
+  if (!toast) return;
+  clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.className = `app-toast show ${type}`;
+  if (duration > 0) {
+    toastTimer = setTimeout(() => {
+      toast.classList.remove('show');
+    }, duration);
+  }
 }
 
 function findMeetingById(eventId) {
