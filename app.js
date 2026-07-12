@@ -1,5 +1,6 @@
 ﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
+const APP_VERSION = 'brigadas-calendario-6';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
 const GOOGLE_SHEET_NAMES = [
@@ -777,14 +778,37 @@ function sendCalendarAction(payload) {
       } catch (healthError) {
         console.warn('No se pudo leer health del Web App.', healthError);
       }
-      await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-      });
+      submitAppsScriptForm(payload);
       return { ok: true, confirmed: false };
     });
+}
+
+function submitAppsScriptForm(payload) {
+  const iframeName = `brigadasSubmit_${Date.now()}`;
+  const iframe = document.createElement('iframe');
+  iframe.name = iframeName;
+  iframe.className = 'hidden';
+  document.body.appendChild(iframe);
+
+  const form = document.createElement('form');
+  form.method = 'GET';
+  form.action = APPS_SCRIPT_URL;
+  form.target = iframeName;
+  form.className = 'hidden';
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = key;
+    input.value = String(value);
+    form.appendChild(input);
+  });
+  document.body.appendChild(form);
+  form.submit();
+  setTimeout(() => {
+    form.remove();
+    iframe.remove();
+  }, 8000);
 }
 
 function renderAlerts(summary) {
@@ -1496,10 +1520,11 @@ function downloadBlob(content, filename, type) {
 }
 
 function setDataStatus(message) {
+  const versionedMessage = `${message} · ${APP_VERSION}`;
   const sidebarStatus = document.getElementById('dataStatus');
   const homeStatus = document.getElementById('dataStatusHome');
-  if (sidebarStatus) sidebarStatus.textContent = message;
-  if (homeStatus) homeStatus.textContent = message;
+  if (sidebarStatus) sidebarStatus.textContent = versionedMessage;
+  if (homeStatus) homeStatus.textContent = versionedMessage;
 }
 
 function escapeHtml(value) {
