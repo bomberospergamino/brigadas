@@ -1,6 +1,6 @@
 ﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
-const APP_VERSION = 'brigadas-calendario-8';
+const APP_VERSION = 'brigadas-calendario-9';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
 const GOOGLE_SHEET_NAMES = [
@@ -699,26 +699,28 @@ async function handleScheduleSubmit(event) {
     estado: 'Programado',
     observaciones: 'Cargado desde modulo Brigadas',
   };
-  const calendarWindow = openCalendarSaveWindow(payload);
   upsertLocalMeeting(payload);
   renderCalendar();
   renderAdmin();
   const message = document.getElementById('scheduleMessage');
-  message.textContent = calendarWindow
-    ? 'Guardando reunion en Google Sheets...'
-    : 'Encuentro agendado en pantalla. Enviando a Google Sheets...';
+  message.textContent = 'Guardando reunion en Google Sheets...';
   message.classList.remove('hidden');
   try {
-    const result = calendarWindow ? { ok: true, confirmed: false, openedWindow: true } : await postToAppsScript(payload);
-    message.textContent = 'Reunion agendada y enviada a Google Sheets.';
+    const result = await postToAppsScript(payload);
+    message.textContent = result?.confirmed === false
+      ? 'Reunion enviada. Si no aparece al refrescar, revisar permisos del Web App.'
+      : 'Reunion agendada y guardada en Google Sheets.';
     setTimeout(async () => {
-      if (calendarWindow && !calendarWindow.closed) calendarWindow.close();
       document.getElementById('scheduleDialog').close();
       await refreshFromSheetsAfterSchedule(payload.id_encuentro);
-    }, result?.openedWindow ? 1800 : 900);
+    }, 900);
   } catch (error) {
     console.warn(error);
-    message.textContent = 'Quedo agendado en pantalla, pero no se pudo confirmar el envio. Revisar despliegue del Apps Script.';
+    state.localMeetings = state.localMeetings.filter((row) => normalizeRow(row).id_encuentro !== payload.id_encuentro);
+    saveStoredMeetings();
+    renderCalendar();
+    renderAdmin();
+    message.textContent = 'No se pudo guardar en Google Sheets. Revisar que el Web App tenga acceso para cualquier persona.';
   }
 }
 
@@ -741,7 +743,7 @@ async function deleteCalendarEvent(eventId) {
   renderCalendar();
   renderAdmin();
   const payload = { action: 'eliminar_encuentro', id_encuentro: eventId };
-  if (!openCalendarSaveWindow(payload)) await postToAppsScript(payload);
+  await postToAppsScript(payload);
 }
 
 function loadStoredMeetings() {
