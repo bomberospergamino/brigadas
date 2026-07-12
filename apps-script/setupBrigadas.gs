@@ -16,7 +16,7 @@ const BRIGADAS_CONFIG = [
 const BRIGADAS_SPREADSHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
 const REPORTES_DRIVE_FOLDER_ID = '1yzN-2WNhyAch4_9FX0GIv4fCeaGkSKE8';
 const UNUSED_BRIGADAS_SHEETS = ['DETALLE_CHECK_EQUIPAMIENTO', 'HISTORIAL_ACCIONES', 'ADMIN_RESUMEN'];
-const BRIGADAS_WEBAPP_VERSION = 'brigadas-calendario-confirmable-2026-07-12';
+const BRIGADAS_WEBAPP_VERSION = 'brigadas-fila-real-2026-07-12';
 
 const BRIGADAS_SHEETS = {
   CONFIG_BRIGADAS: ['id_brigada', 'nombre_brigada', 'columna_personal', 'logo_file', 'color', 'activa', 'orden', 'frecuencia_minima_mensual', 'responsable', 'bibliografia_url', 'observaciones'],
@@ -67,7 +67,7 @@ function setupBrigadasDirecto_() {
     if (sheet) ss.deleteSheet(sheet);
   });
   Object.keys(BRIGADAS_SHEETS).forEach((name) => ensureSheet_(ss, name, BRIGADAS_SHEETS[name]));
-  compactSheet_(ss.getSheetByName('EQUIPAMIENTO'), BRIGADAS_SHEETS.EQUIPAMIENTO);
+  ensureSheet_(ss, 'EQUIPAMIENTO', BRIGADAS_SHEETS.EQUIPAMIENTO);
   compactSheet_(ss.getSheetByName('CHECK_EQUIPAMIENTO'), BRIGADAS_SHEETS.CHECK_EQUIPAMIENTO);
   upsertRows_(ss.getSheetByName('CONFIG_BRIGADAS'), BRIGADAS_CONFIG, 1);
   upsertRows_(ss.getSheetByName('PARAMETROS'), PARAMETROS_BASE, 2);
@@ -96,9 +96,12 @@ function setupBrigadasSeguro() {
     pasos.push('Crear/verificar hojas');
     logSetup_(ss, 'PASO', pasos[pasos.length - 1]);
     Object.keys(BRIGADAS_SHEETS).forEach((name) => ensureSheet_(ss, name, BRIGADAS_SHEETS[name]));
-    pasos.push('Compactar equipamiento');
+    pasos.push('Verificar equipamiento');
     logSetup_(ss, 'PASO', pasos[pasos.length - 1]);
-    compactSheet_(ss.getSheetByName('EQUIPAMIENTO'), BRIGADAS_SHEETS.EQUIPAMIENTO);
+    ensureSheet_(ss, 'EQUIPAMIENTO', BRIGADAS_SHEETS.EQUIPAMIENTO);
+    pasos.push('Compactar encuentros');
+    logSetup_(ss, 'PASO', pasos[pasos.length - 1]);
+    compactSheet_(ss.getSheetByName('ENCUENTROS'), BRIGADAS_SHEETS.ENCUENTROS);
     compactSheet_(ss.getSheetByName('CHECK_EQUIPAMIENTO'), BRIGADAS_SHEETS.CHECK_EQUIPAMIENTO);
     pasos.push('Cargar configuracion');
     logSetup_(ss, 'PASO', pasos[pasos.length - 1]);
@@ -188,12 +191,25 @@ function doGet(e) {
         module: 'brigadas',
         version: BRIGADAS_WEBAPP_VERSION,
         calendar_get_actions: true,
-        actions: ['read_all', 'programar_encuentro', 'editar_encuentro', 'eliminar_encuentro'],
+        actions: ['health', 'read_all', 'preparar_estructura', 'validar_estructura', 'diagnostico', 'test_encuentro', 'programar_encuentro', 'editar_encuentro', 'eliminar_encuentro'],
         timestamp: new Date().toISOString(),
       });
     }
     if (action === 'read_all') {
       return webResponse_(e, readAllSheets_());
+    }
+    if (action === 'preparar_estructura') {
+      const setup = setupBrigadasSeguro();
+      return webResponse_(e, { ok: true, setup, structure: validarEstructuraBrigadas_() });
+    }
+    if (action === 'validar_estructura') {
+      return webResponse_(e, validarEstructuraBrigadas_());
+    }
+    if (action === 'diagnostico') {
+      return webResponse_(e, diagnosticoBrigadasDetallado_());
+    }
+    if (action === 'test_encuentro') {
+      return webResponse_(e, { ok: true, result: testEncuentro_() });
     }
     if (action === 'programar_encuentro') {
       const result = programarEncuentro_(e.parameter || {});
@@ -228,6 +244,16 @@ function doPost(e) {
       const result = eliminarEncuentro_(params);
       return jsonResponse_({ ok: true, result });
     }
+    if (params.action === 'preparar_estructura') {
+      const setup = setupBrigadasSeguro();
+      return jsonResponse_({ ok: true, setup, structure: validarEstructuraBrigadas_() });
+    }
+    if (params.action === 'validar_estructura') {
+      return jsonResponse_(validarEstructuraBrigadas_());
+    }
+    if (params.action === 'test_encuentro') {
+      return jsonResponse_({ ok: true, result: testEncuentro_() });
+    }
     if (params.action === 'guardar_reporte') {
       const result = guardarReporte_(params);
       return jsonResponse_({ ok: true, result });
@@ -253,17 +279,98 @@ function parsePostParams_(e) {
   return e && e.parameter ? e.parameter : {};
 }
 
+function validarEstructuraBrigadas_() {
+  const ss = getBrigadasSpreadsheet_();
+  const result = {
+    ok: true,
+    version: BRIGADAS_WEBAPP_VERSION,
+    spreadsheet_id: ss.getId(),
+    spreadsheet_name: ss.getName(),
+    timestamp: new Date().toISOString(),
+    sheets: {},
+  };
+  Object.keys(BRIGADAS_SHEETS).forEach((name) => {
+    const sheet = ss.getSheetByName(name);
+    const expectedHeaders = BRIGADAS_SHEETS[name];
+    if (!sheet) {
+      result.ok = false;
+      result.sheets[name] = {
+        exists: false,
+        missing_headers: expectedHeaders,
+        extra_headers: [],
+        row_count: 0,
+      };
+      return;
+    }
+    const headers = getNormalizedHeaderList_(sheet);
+    const headerSet = new Set(headers);
+    const expectedSet = new Set(expectedHeaders);
+    const missing = expectedHeaders.filter((header) => !headerSet.has(header));
+    const extra = headers.filter((header) => header && !expectedSet.has(header));
+    if (missing.length) result.ok = false;
+    result.sheets[name] = {
+      exists: true,
+      row_count: Math.max(getLastContentRow_(sheet) - 1, 0),
+      column_count: sheet.getLastColumn(),
+      missing_headers: missing,
+      extra_headers: extra,
+      headers: headers.filter(Boolean),
+    };
+  });
+  const log = getSetupLogSheet_(ss);
+  log.appendRow([new Date(), result.ok ? 'OK' : 'WARN', 'validar_estructura: ' + JSON.stringify({
+    ok: result.ok,
+    faltantes: Object.keys(result.sheets).filter((name) => result.sheets[name].missing_headers && result.sheets[name].missing_headers.length),
+  })]);
+  return result;
+}
+
+function diagnosticoBrigadasDetallado_() {
+  const ss = getBrigadasSpreadsheet_();
+  const structure = validarEstructuraBrigadas_();
+  return {
+    ok: structure.ok,
+    version: BRIGADAS_WEBAPP_VERSION,
+    spreadsheet_id: ss.getId(),
+    spreadsheet_name: ss.getName(),
+    sheets_actuales: ss.getSheets().map((sheet) => sheet.getName()),
+    usuario: Session.getActiveUser().getEmail() || 'sin_email_visible',
+    drive_folder_id: REPORTES_DRIVE_FOLDER_ID,
+    structure,
+  };
+}
+
+function testEncuentro_() {
+  const now = new Date();
+  return programarEncuentro_({
+    action: 'test_encuentro',
+    id_encuentro: 'test_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss'),
+    fecha: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    mes_periodo: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM'),
+    id_brigada: 'mat_pel',
+    brigada: 'Mat Pel',
+    tipo_encuentro: 'Prueba tecnica',
+    tema: 'Prueba de escritura Web App',
+    responsable: 'Sistema',
+    lugar: 'Apps Script',
+    hora_inicio: Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm'),
+    hora_fin: '',
+    estado: 'Programado',
+    observaciones: 'Fila de prueba para verificar guardado en ENCUENTROS',
+  });
+}
+
 function programarEncuentro_(params) {
   const ss = getBrigadasSpreadsheet_();
   ensureSheet_(ss, 'ENCUENTROS', BRIGADAS_SHEETS.ENCUENTROS);
   const sheet = ss.getSheetByName('ENCUENTROS');
   const headers = getHeaderMap_(sheet);
+  logSetup_(ss, 'WEBAPP', 'programar_encuentro params: ' + JSON.stringify(params || {}));
   const idBrigada = String(params.id_brigada || '').trim();
   if (!idBrigada) throw new Error('Falta id_brigada');
   if (!params.fecha) throw new Error('Falta fecha');
 
   const brigade = BRIGADAS_CONFIG.find((row) => row[0] === idBrigada);
-  const rowNumber = sheet.getLastRow() + 1;
   const values = {
     id_encuentro: params.id_encuentro || `enc_${Date.now()}`,
     fecha: params.fecha,
@@ -280,11 +387,27 @@ function programarEncuentro_(params) {
     observaciones: params.observaciones || 'Cargado desde modulo Brigadas',
     id_asistencia: params.id_asistencia || '',
   };
+  const rowNumber = findRowById_(sheet, 'id_encuentro', values.id_encuentro) || Math.max(getLastContentRow_(sheet) + 1, 2);
   Object.keys(values).forEach((header) => {
     if (headers[header]) sheet.getRange(rowNumber, headers[header]).setValue(values[header]);
   });
   formatSheet_(sheet);
-  return values;
+  SpreadsheetApp.flush();
+  const lastRowAfter = sheet.getLastRow();
+  logSetup_(ss, 'WEBAPP', 'programar_encuentro escrito: ' + JSON.stringify({
+    id_encuentro: values.id_encuentro,
+    spreadsheet_id: ss.getId(),
+    sheet: sheet.getName(),
+    rowNumber: rowNumber,
+    lastRowAfter: lastRowAfter,
+  }));
+  return Object.assign({}, values, {
+    spreadsheet_id: ss.getId(),
+    spreadsheet_name: ss.getName(),
+    sheet: sheet.getName(),
+    rowNumber: rowNumber,
+    lastRowAfter: lastRowAfter,
+  });
 }
 
 function editarEncuentro_(params) {
@@ -386,8 +509,6 @@ function getOrCreateFolder_(parent, name) {
 }
 
 function getBrigadasSpreadsheet_() {
-  const active = SpreadsheetApp.getActiveSpreadsheet();
-  if (active) return active;
   return SpreadsheetApp.openById(BRIGADAS_SPREADSHEET_ID);
 }
 
@@ -582,7 +703,7 @@ function applyValidations_(ss) {
 }
 
 function applyFormulas_(ss) {
-  ['ENCUENTROS', 'ASISTENCIAS', 'CHECK_EQUIPAMIENTO'].forEach((name) => {
+  ['ASISTENCIAS', 'CHECK_EQUIPAMIENTO'].forEach((name) => {
     const sheet = ss.getSheetByName(name);
     const h = getHeaderMap_(sheet);
     if (!h.fecha || !h.mes_periodo) return;
@@ -616,6 +737,11 @@ function getHeaderMap_(sheet) {
     if (value) map[String(value)] = index + 1;
   });
   return map;
+}
+
+function getNormalizedHeaderList_(sheet) {
+  const values = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+  return values.map((value) => normalizeHeader_(value));
 }
 
 function columnLetter_(column) {
