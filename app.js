@@ -44,7 +44,7 @@ const state = {
   adminDateFrom: '',
   adminDateTo: '',
   currentFileName: '',
-  localMeetings: [],
+  localMeetings: loadStoredMeetings(),
   editingEventId: '',
 };
 
@@ -438,24 +438,33 @@ function renderEquipment() {
     <section class="equipment-location">
       <h3>${escapeHtml(brigade?.nombre_brigada || 'Equipamiento')}</h3>
       <div class="table-wrap">
-        <table>
+        <table class="equipment-check-table">
           <thead>
             <tr>
-              <th>Ubicacion</th>
               <th>Elemento</th>
+              <th>Unidad</th>
               <th>Cantidad</th>
-              <th>Condicion</th>
+              <th>Estado</th>
               <th>Observaciones</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map((item) => `
               <tr data-equipment-row="1">
-                <td>${escapeHtml(item.ubicacion || '')}</td>
-                <td>${escapeHtml(item.elemento || '')}</td>
-                <td><input data-eq-field="cantidad" type="text" value="${escapeHtml(item.unidades || item.cantidad || '')}" placeholder="Cantidad"></td>
                 <td>
-                  <select data-eq-field="condicion">
+                  <strong>${escapeHtml(item.elemento || '')}</strong>
+                  <small>${escapeHtml(item.ubicacion || '')}</small>
+                </td>
+                <td>${escapeHtml(item.unidades || item.unidad || item.cantidad || '')}</td>
+                <td>
+                  <select data-eq-field="cantidad">
+                    <option>OK</option>
+                    <option>Faltante</option>
+                    <option>Sobra</option>
+                  </select>
+                </td>
+                <td>
+                  <select data-eq-field="estado">
                     <option>Bueno</option>
                     <option>Regular</option>
                     <option>Malo</option>
@@ -689,6 +698,7 @@ function upsertLocalMeeting(payload) {
   const index = state.localMeetings.findIndex((row) => row.id_encuentro === payload.id_encuentro);
   if (index >= 0) state.localMeetings[index] = payload;
   else state.localMeetings.push(payload);
+  saveStoredMeetings();
 }
 
 async function deleteCalendarEvent(eventId) {
@@ -696,6 +706,7 @@ async function deleteCalendarEvent(eventId) {
   const ok = window.confirm('Eliminar este encuentro del calendario?');
   if (!ok) return;
   state.localMeetings = state.localMeetings.filter((row) => row.id_encuentro !== eventId);
+  saveStoredMeetings();
   if (state.sheets.ENCUENTROS) {
     state.sheets.ENCUENTROS = state.sheets.ENCUENTROS.filter((row) => normalizeRow(row).id_encuentro !== eventId);
   }
@@ -704,8 +715,20 @@ async function deleteCalendarEvent(eventId) {
   await postToAppsScript({ action: 'eliminar_encuentro', id_encuentro: eventId });
 }
 
+function loadStoredMeetings() {
+  try {
+    return JSON.parse(localStorage.getItem('brigadasLocalMeetings') || '[]');
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveStoredMeetings() {
+  localStorage.setItem('brigadasLocalMeetings', JSON.stringify(state.localMeetings));
+}
+
 function findMeetingById(eventId) {
-  return [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).find((row) => row.id_encuentro === eventId);
+  return getAllMeetings().find((row) => row.id_encuentro === eventId);
 }
 
 async function postToAppsScript(payload) {
@@ -768,11 +791,11 @@ function getEquipamientoBrigada(id_brigada) {
   const brigade = getBrigadasActivas().find((item) => item.id_brigada === id_brigada);
   return (state.sheets.EQUIPAMIENTO || [])
     .map(normalizeRow)
-    .filter((row) => normalizeState(row.brigada) === normalizeState(brigade?.nombre_brigada) || row.id_brigada === id_brigada);
+    .filter((row) => rowBelongsToBrigade(row, brigade));
 }
 
 function getEncuentrosMes(mes_periodo) {
-  return [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).filter((row) => {
+  return getAllMeetings().filter((row) => {
     const key = row.mes_periodo || monthKey(parseDate(row.fecha));
     return key === mes_periodo;
   });
@@ -781,10 +804,31 @@ function getEncuentrosMes(mes_periodo) {
 function getEncuentrosRango(from, to) {
   const fromDate = parseDate(from) || new Date(1900, 0, 1);
   const toDate = parseDate(to) || new Date();
-  return [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).filter((row) => {
+  return getAllMeetings().filter((row) => {
     const date = parseDate(row.fecha);
     return date && date >= fromDate && date <= toDate;
   });
+}
+
+function getAllMeetings() {
+  const map = new Map();
+  [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).forEach((row) => {
+    const key = row.id_encuentro || `${row.fecha}-${row.id_brigada}-${row.hora_inicio}-${row.tema}`;
+    map.set(key, row);
+  });
+  return Array.from(map.values());
+}
+
+function rowBelongsToBrigade(row, brigade) {
+  if (!brigade) return false;
+  const rowBrigade = normalizeState(row.brigada || row.nombre_brigada || row.id_brigada);
+  if (!rowBrigade) return false;
+  const aliases = [
+    brigade.id_brigada,
+    brigade.nombre_brigada,
+    `Brigada ${brigade.nombre_brigada}`,
+  ].map(normalizeState);
+  return aliases.some((alias) => rowBrigade === alias || rowBrigade.includes(alias) || alias.includes(rowBrigade));
 }
 
 function getBrigadasSinEncuentro(mes_periodo) {
@@ -942,11 +986,21 @@ function detectRepeatedAbsences() {
 
 async function exportarCalendarioPNG() {
   const node = document.getElementById('calendarExport');
-  const canvas = await html2canvas(node, { backgroundColor: '#ffffff', scale: 2 });
-  const link = document.createElement('a');
-  link.download = `brigadas-calendario-${monthKey(state.calendarDate)}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
+  node.classList.add('export-mode');
+  try {
+    const canvas = await html2canvas(node, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      width: node.scrollWidth,
+      windowWidth: Math.max(node.scrollWidth, 1200),
+    });
+    const link = document.createElement('a');
+    link.download = `brigadas-calendario-${monthKey(state.calendarDate)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } finally {
+    node.classList.remove('export-mode');
+  }
 }
 
 function setBrigadeActionStatus(message, type = 'info') {
@@ -1097,14 +1151,14 @@ async function generarPDFCheckEquipamiento(uploadToDrive = true) {
   doc.setTextColor(20, 32, 42);
   const body = rows.map((item, index) => {
     const rowElement = document.querySelectorAll('[data-equipment-row]')[index];
-    const cantidad = rowElement?.querySelector('[data-eq-field="cantidad"]')?.value || item.unidades || item.cantidad || '';
-    const condicion = rowElement?.querySelector('[data-eq-field="condicion"]')?.value || item.estado_bueno_malo || 'Bueno';
+    const cantidad = rowElement?.querySelector('[data-eq-field="cantidad"]')?.value || item.cantidad_ok_no || 'OK';
+    const estado = rowElement?.querySelector('[data-eq-field="estado"]')?.value || item.estado_bueno_malo || 'Bueno';
     const obs = rowElement?.querySelector('[data-eq-field="obs"]')?.value || item.observaciones || '';
-    return [item.ubicacion || '', item.elemento || '', cantidad, condicion, obs];
+    return [item.ubicacion || '', item.elemento || '', item.unidades || item.unidad || '', cantidad, estado, obs];
   });
   doc.autoTable({
     startY: 36,
-    head: [['Ubicacion', 'Elemento', 'Cantidad', 'Condicion', 'Observaciones']],
+    head: [['Ubicacion', 'Elemento', 'Unidad', 'Cantidad', 'Estado', 'Observaciones']],
     body,
     styles: { fontSize: 8, cellPadding: 2.1 },
     headStyles: { fillColor: [6, 52, 82], textColor: [255, 255, 255] },
@@ -1112,10 +1166,11 @@ async function generarPDFCheckEquipamiento(uploadToDrive = true) {
     margin: { left: 14, right: 14 },
     columnStyles: {
       0: { cellWidth: 42 },
-      1: { cellWidth: 52 },
-      2: { cellWidth: 24, halign: 'center' },
-      3: { cellWidth: 28, halign: 'center' },
-      4: { cellWidth: 36 },
+      1: { cellWidth: 48 },
+      2: { cellWidth: 20, halign: 'center' },
+      3: { cellWidth: 24, halign: 'center' },
+      4: { cellWidth: 24, halign: 'center' },
+      5: { cellWidth: 28 },
     },
   });
   const filename = `check-equipamiento-${brigade.id_brigada}-${new Date().toISOString().slice(0, 10)}.pdf`;

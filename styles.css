@@ -312,19 +312,14 @@ p { color: var(--muted); margin-top: 4px; }
   flex: 0 0 100%;
   width: 100%;
   max-width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
   gap: 6px;
   padding: 14px;
   border-top: 1px solid var(--line);
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
 }
 
 .brigade-menu button {
-  flex: 0 0 auto;
   min-height: 42px;
   text-align: center;
   font-weight: 850;
@@ -428,17 +423,17 @@ p { color: var(--muted); margin-top: 4px; }
 
 #equipmentPanel th:nth-child(1),
 #equipmentPanel td:nth-child(1) {
-  width: 21%;
+  width: 33%;
 }
 
 #equipmentPanel th:nth-child(2),
 #equipmentPanel td:nth-child(2) {
-  width: 27%;
+  width: 12%;
 }
 
 #equipmentPanel th:nth-child(3),
 #equipmentPanel td:nth-child(3) {
-  width: 16%;
+  width: 17%;
 }
 
 #equipmentPanel th:nth-child(4),
@@ -448,7 +443,14 @@ p { color: var(--muted); margin-top: 4px; }
 
 #equipmentPanel th:nth-child(5),
 #equipmentPanel td:nth-child(5) {
-  width: 18%;
+  width: 20%;
+}
+
+#equipmentPanel td small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
 }
 
 #equipmentPanel input,
@@ -832,14 +834,15 @@ td input[type="radio"] {
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
     background: #fff;
-    scroll-snap-type: x proximity;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .brigade-menu button {
     min-height: 38px;
-    padding: 8px 11px;
-    font-size: 13px;
-    scroll-snap-align: start;
+    padding: 8px 7px;
+    font-size: 12px;
+    white-space: normal;
+    line-height: 1.1;
   }
 
   .hero-panel {
@@ -852,12 +855,47 @@ td input[type="radio"] {
   }
 
   .calendar-grid {
-    grid-template-columns: repeat(5, minmax(76px, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .day-cell {
-    min-height: 86px;
-    padding: 6px;
+    min-height: 70px;
+    padding: 4px;
+  }
+
+  .day-head {
+    padding: 5px 2px;
+    font-size: 10px;
+  }
+
+  .calendar-export {
+    padding: 8px;
+  }
+
+  .calendar-title span {
+    font-size: 19px;
+  }
+
+  .calendar-title strong {
+    font-size: 13px;
+  }
+
+  .event-pill {
+    min-width: 34px;
+    min-height: 34px;
+    padding: 2px;
+  }
+
+  .event-pill img {
+    width: 30px;
+    height: 30px;
+  }
+
+  .event-pill .event-hour {
+    right: 0;
+    bottom: -2px;
+    font-size: 8px;
+    padding: 0 3px;
   }
 
   #equipmentPanel {
@@ -928,6 +966,99 @@ td input[type="radio"] {
   #equipmentPanel select {
     min-height: 36px;
   }
+
+  #equipmentPanel .table-wrap {
+    overflow-x: hidden !important;
+  }
+
+  #equipmentPanel table,
+  #equipmentPanel thead,
+  #equipmentPanel tbody {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  #equipmentPanel tr {
+    display: table-row;
+    border: 0;
+    padding: 0;
+  }
+
+  #equipmentPanel th,
+  #equipmentPanel td {
+    display: table-cell;
+    padding: 5px 3px;
+    font-size: 11px;
+    vertical-align: middle;
+    border-bottom: 1px solid #ece6dc;
+  }
+
+  #equipmentPanel td::before {
+    content: none !important;
+  }
+
+  #equipmentPanel th:nth-child(1),
+  #equipmentPanel td:nth-child(1) {
+    width: 43%;
+  }
+
+  #equipmentPanel th:nth-child(2),
+  #equipmentPanel td:nth-child(2) {
+    width: 13%;
+  }
+
+  #equipmentPanel th:nth-child(3),
+  #equipmentPanel td:nth-child(3) {
+    width: 22%;
+  }
+
+  #equipmentPanel th:nth-child(4),
+  #equipmentPanel td:nth-child(4) {
+    width: 22%;
+  }
+
+  #equipmentPanel th:nth-child(5),
+  #equipmentPanel td:nth-child(5) {
+    display: none;
+  }
+
+  #equipmentPanel td small {
+    font-size: 9px;
+    line-height: 1.05;
+  }
+
+  #equipmentPanel select,
+  #equipmentPanel input {
+    min-height: 32px;
+    padding: 4px 2px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 860px) and (orientation: landscape) {
+  #equipmentPanel th:nth-child(5),
+  #equipmentPanel td:nth-child(5) {
+    display: table-cell;
+    width: 24%;
+  }
+
+  #equipmentPanel th:nth-child(1),
+  #equipmentPanel td:nth-child(1) {
+    width: 30%;
+  }
+
+  #equipmentPanel th:nth-child(2),
+  #equipmentPanel td:nth-child(2) {
+    width: 10%;
+  }
+
+  #equipmentPanel th:nth-child(3),
+  #equipmentPanel td:nth-child(3),
+  #equipmentPanel th:nth-child(4),
+  #equipmentPanel td:nth-child(4) {
+    width: 18%;
+  }
 }
 
 #equipmentPanel table,
@@ -939,4 +1070,29 @@ td input[type="radio"] {
 
 #equipmentPanel .table-wrap {
   overflow-x: hidden !important;
+}
+
+.calendar-export.export-mode {
+  width: 1120px;
+  max-width: none;
+  padding: 18px;
+}
+
+.calendar-export.export-mode .calendar-grid {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.calendar-export.export-mode .day-cell {
+  min-height: 128px;
+  padding: 8px;
+}
+
+.calendar-export.export-mode .day-head {
+  font-size: 14px;
+  padding: 8px;
+}
+
+.calendar-export.export-mode .event-pill img {
+  width: 54px;
+  height: 54px;
 }
