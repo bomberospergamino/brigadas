@@ -1,6 +1,6 @@
 ﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
-const APP_VERSION = 'brigadas-calendario-7';
+const APP_VERSION = 'brigadas-calendario-8';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
 const GOOGLE_SHEET_NAMES = [
@@ -129,6 +129,7 @@ async function loadGoogleSheet() {
     workbook.SheetNames.forEach((name) => {
       state.sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: '', raw: false });
     });
+    clearSyncedLocalMeetings();
     state.currentFileName = 'Google Sheets Brigadas';
     validateRequiredSheets();
     setDataStatus('Datos cargados desde Google Sheets');
@@ -155,6 +156,7 @@ async function loadGoogleSheetFromAppsScript() {
   const payload = await loadJsonp(`${APPS_SCRIPT_URL}?action=read_all`);
   if (!payload.ok || !payload.sheets) throw new Error(payload.error || 'Respuesta invalida del Web App');
   state.sheets = payload.sheets;
+  clearSyncedLocalMeetings();
   state.currentFileName = 'Google Sheets Brigadas';
   validateRequiredSheets();
 }
@@ -170,6 +172,7 @@ async function loadGoogleSheetsByJsonp() {
     }
   }));
   state.sheets = Object.fromEntries(entries);
+  clearSyncedLocalMeetings();
   state.currentFileName = 'Google Sheets Brigadas';
   validateRequiredSheets();
 }
@@ -547,9 +550,18 @@ function renderCalendar() {
 function renderCalendarInto({ gridId, titleId, counterId, missingId, selectedMonth, meetings, missing }) {
   const grid = document.getElementById(gridId);
   grid.innerHTML = '';
-  ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes'].forEach((day) => {
+  [
+    ['Lunes', 'Lun'],
+    ['Martes', 'Mar'],
+    ['Miercoles', 'Mie'],
+    ['Jueves', 'Jue'],
+    ['Viernes', 'Vie'],
+    ['Sabado', 'Sab'],
+    ['Domingo', 'Dom'],
+  ].forEach(([day, shortDay]) => {
     const head = document.createElement('div');
     head.className = 'day-head';
+    head.dataset.short = shortDay;
     head.textContent = day;
     grid.appendChild(head);
   });
@@ -693,17 +705,17 @@ async function handleScheduleSubmit(event) {
   renderAdmin();
   const message = document.getElementById('scheduleMessage');
   message.textContent = calendarWindow
-    ? 'Encuentro agendado. Se abrio una ventana de Google para guardarlo en la hoja ENCUENTROS.'
+    ? 'Guardando reunion en Google Sheets...'
     : 'Encuentro agendado en pantalla. Enviando a Google Sheets...';
   message.classList.remove('hidden');
   try {
     const result = calendarWindow ? { ok: true, confirmed: false, openedWindow: true } : await postToAppsScript(payload);
-    message.textContent = result?.openedWindow
-      ? 'Si la ventana de Google muestra ok:true, cerrala y toca Actualizar Sheets para ver el encuentro fijo.'
-      : (result?.confirmed === false
-        ? 'Encuentro enviado sin confirmacion. Si no aparece en ENCUENTROS, abrilo desde la ventana de Google.'
-        : 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.');
-    if (!result?.openedWindow) setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
+    message.textContent = 'Reunion agendada y enviada a Google Sheets.';
+    setTimeout(async () => {
+      if (calendarWindow && !calendarWindow.closed) calendarWindow.close();
+      document.getElementById('scheduleDialog').close();
+      await refreshFromSheetsAfterSchedule(payload.id_encuentro);
+    }, result?.openedWindow ? 1800 : 900);
   } catch (error) {
     console.warn(error);
     message.textContent = 'Quedo agendado en pantalla, pero no se pudo confirmar el envio. Revisar despliegue del Apps Script.';
@@ -742,6 +754,32 @@ function loadStoredMeetings() {
 
 function saveStoredMeetings() {
   localStorage.setItem('brigadasLocalMeetings', JSON.stringify(state.localMeetings));
+}
+
+function clearSyncedLocalMeetings() {
+  if (!state.localMeetings.length || !state.sheets.ENCUENTROS) return;
+  const syncedIds = new Set((state.sheets.ENCUENTROS || []).map(normalizeRow).map((row) => row.id_encuentro).filter(Boolean));
+  state.localMeetings = state.localMeetings.filter((row) => !syncedIds.has(normalizeRow(row).id_encuentro));
+  saveStoredMeetings();
+}
+
+async function refreshFromSheetsAfterSchedule(expectedMeetingId = '') {
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await loadGoogleSheet();
+    if (expectedMeetingId && !meetingExistsInSheet(expectedMeetingId)) {
+      state.localMeetings = state.localMeetings.filter((row) => normalizeRow(row).id_encuentro !== expectedMeetingId);
+      saveStoredMeetings();
+      renderCalendar();
+      renderAdmin();
+    }
+  } catch (error) {
+    console.warn('No se pudo refrescar Sheets despues de agendar', error);
+  }
+}
+
+function meetingExistsInSheet(eventId) {
+  return (state.sheets.ENCUENTROS || []).map(normalizeRow).some((row) => row.id_encuentro === eventId);
 }
 
 function findMeetingById(eventId) {
@@ -903,7 +941,10 @@ function getEncuentrosRango(from, to) {
 
 function getAllMeetings() {
   const map = new Map();
-  [...(state.sheets.ENCUENTROS || []), ...state.localMeetings].map(normalizeRow).forEach((row) => {
+  const sheetRows = (state.sheets.ENCUENTROS || []).map(normalizeRow);
+  const sheetIds = new Set(sheetRows.map((row) => row.id_encuentro).filter(Boolean));
+  const pendingLocal = state.localMeetings.map(normalizeRow).filter((row) => !row.id_encuentro || !sheetIds.has(row.id_encuentro));
+  [...sheetRows, ...pendingLocal].forEach((row) => {
     const key = row.id_encuentro || `${row.fecha}-${row.id_brigada}-${row.hora_inicio}-${row.tema}`;
     map.set(key, row);
   });
@@ -1419,10 +1460,10 @@ function calendarWeekdays(date) {
   start.setDate(first.getDate() - day + 1);
   const days = [];
   let cursor = new Date(start);
-  while (days.length < 30 || monthKey(cursor) === monthKey(date)) {
-    if ((cursor.getDay() || 7) <= 5) days.push(new Date(cursor));
+  while (days.length < 35 || monthKey(cursor) === monthKey(date)) {
+    days.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
-    if (days.length >= 25 && monthKey(cursor) !== monthKey(date) && (cursor.getDay() || 7) === 1) break;
+    if (days.length >= 35 && monthKey(cursor) !== monthKey(date) && (cursor.getDay() || 7) === 1) break;
   }
   return days;
 }

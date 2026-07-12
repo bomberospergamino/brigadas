@@ -636,7 +636,7 @@ td input[type="radio"] {
 
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(7, minmax(86px, 1fr));
   border: 1px solid rgba(255,255,255,.26);
 }
 
@@ -855,16 +855,21 @@ td input[type="radio"] {
   }
 
   .calendar-grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
   .day-cell {
-    min-height: 70px;
-    padding: 4px;
+    min-height: 58px;
+    padding: 3px;
   }
 
   .day-head {
-    padding: 5px 2px;
+    padding: 5px 1px;
+    font-size: 0;
+  }
+
+  .day-head::after {
+    content: attr(data-short);
     font-size: 10px;
   }
 
@@ -881,14 +886,15 @@ td input[type="radio"] {
   }
 
   .event-pill {
-    min-width: 34px;
-    min-height: 34px;
+    min-width: 28px;
+    min-height: 28px;
     padding: 2px;
+    margin-top: 3px;
   }
 
   .event-pill img {
-    width: 30px;
-    height: 30px;
+    width: 25px;
+    height: 25px;
   }
 
   .event-pill .event-hour {
@@ -1073,13 +1079,13 @@ td input[type="radio"] {
 }
 
 .calendar-export.export-mode {
-  width: 1120px;
+  width: 1400px;
   max-width: none;
   padding: 18px;
 }
 
 .calendar-export.export-mode .calendar-grid {
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(7, 1fr);
 }
 
 .calendar-export.export-mode .day-cell {
