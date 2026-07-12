@@ -1,6 +1,6 @@
 ﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
-const APP_VERSION = 'brigadas-calendario-6';
+const APP_VERSION = 'brigadas-calendario-7';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
 const GOOGLE_SHEET_NAMES = [
@@ -687,18 +687,23 @@ async function handleScheduleSubmit(event) {
     estado: 'Programado',
     observaciones: 'Cargado desde modulo Brigadas',
   };
+  const calendarWindow = openCalendarSaveWindow(payload);
   upsertLocalMeeting(payload);
   renderCalendar();
   renderAdmin();
   const message = document.getElementById('scheduleMessage');
-  message.textContent = 'Encuentro agendado en pantalla. Enviando a Google Sheets...';
+  message.textContent = calendarWindow
+    ? 'Encuentro agendado. Se abrio una ventana de Google para guardarlo en la hoja ENCUENTROS.'
+    : 'Encuentro agendado en pantalla. Enviando a Google Sheets...';
   message.classList.remove('hidden');
   try {
-    const result = await postToAppsScript(payload);
-    message.textContent = result?.confirmed === false
-      ? 'Encuentro enviado sin confirmacion. Si no aparece en ENCUENTROS, falta redeployar la version confirmable del Apps Script.'
-      : 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.';
-    setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
+    const result = calendarWindow ? { ok: true, confirmed: false, openedWindow: true } : await postToAppsScript(payload);
+    message.textContent = result?.openedWindow
+      ? 'Si la ventana de Google muestra ok:true, cerrala y toca Actualizar Sheets para ver el encuentro fijo.'
+      : (result?.confirmed === false
+        ? 'Encuentro enviado sin confirmacion. Si no aparece en ENCUENTROS, abrilo desde la ventana de Google.'
+        : 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.');
+    if (!result?.openedWindow) setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
   } catch (error) {
     console.warn(error);
     message.textContent = 'Quedo agendado en pantalla, pero no se pudo confirmar el envio. Revisar despliegue del Apps Script.';
@@ -723,7 +728,8 @@ async function deleteCalendarEvent(eventId) {
   }
   renderCalendar();
   renderAdmin();
-  await postToAppsScript({ action: 'eliminar_encuentro', id_encuentro: eventId });
+  const payload = { action: 'eliminar_encuentro', id_encuentro: eventId };
+  if (!openCalendarSaveWindow(payload)) await postToAppsScript(payload);
 }
 
 function loadStoredMeetings() {
@@ -754,14 +760,28 @@ async function postToAppsScript(payload) {
   });
 }
 
-function sendCalendarAction(payload) {
+function buildAppsScriptUrl(payload) {
   const url = new URL(APPS_SCRIPT_URL);
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null) url.searchParams.set(key, value);
   });
+  return url.toString();
+}
+
+function openCalendarSaveWindow(payload) {
+  try {
+    return window.open(buildAppsScriptUrl(payload), 'brigadasCalendarSave', 'popup,width=560,height=560');
+  } catch (error) {
+    console.warn('No se pudo abrir ventana de guardado', error);
+    return null;
+  }
+}
+
+function sendCalendarAction(payload) {
+  const url = buildAppsScriptUrl(payload);
   const healthUrl = new URL(APPS_SCRIPT_URL);
   healthUrl.searchParams.set('action', 'health');
-  return loadJsonp(url.toString())
+  return loadJsonp(url)
     .then((result) => {
       if (!result || result.ok !== true) {
         throw new Error(result?.error || 'No se pudo guardar en Google Sheets');
