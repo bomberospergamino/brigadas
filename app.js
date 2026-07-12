@@ -1,4 +1,4 @@
-const ADMIN_PASSWORD = '1105';
+﻿const ADMIN_PASSWORD = '1105';
 const GOOGLE_SHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
 const GOOGLE_SHEET_EXPORT_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/export?format=xlsx`;
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkwPypf9lYGAROZcWORevy916PRsKQxFG_wEv8GrMwEEyVSpYvBoiPl3tPSJlIpVHXIg/exec';
@@ -26,8 +26,8 @@ const BRIGADES_FALLBACK = [
   { id_brigada: 'brec', nombre_brigada: 'BREC', columna_personal: 'brec', logo_file: 'brec_logo.jpeg', color: '#6C584C', activa: 'SI', orden: 7 },
 ];
 const EQUIPMENT_EXAMPLES = [
-  { ubicacion: 'Móvil / Depósito', elemento: 'Bolso operativo', unidades: '1', cantidad_ok_no: 'OK', estado_bueno_malo: 'BUENO', observaciones: 'Ejemplo de carga' },
-  { ubicacion: 'Móvil / Depósito', elemento: 'Guantes de trabajo', unidades: '4 pares', cantidad_ok_no: 'OK', estado_bueno_malo: 'BUENO', observaciones: 'Ejemplo de carga' },
+  { ubicacion: 'MÃ³vil / DepÃ³sito', elemento: 'Bolso operativo', unidades: '1', cantidad_ok_no: 'OK', estado_bueno_malo: 'BUENO', observaciones: 'Ejemplo de carga' },
+  { ubicacion: 'MÃ³vil / DepÃ³sito', elemento: 'Guantes de trabajo', unidades: '4 pares', cantidad_ok_no: 'OK', estado_bueno_malo: 'BUENO', observaciones: 'Ejemplo de carga' },
 ];
 
 const MATPEL_BIBLIOGRAPHY = [
@@ -386,7 +386,7 @@ function renderEquipmentLegacy() {
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(row);
   });
-  container.innerHTML = `${realRows.length ? '' : '<div class="notice">Ejemplos de carga. Para que sea real, cargá la hoja EQUIPAMIENTO.</div>'}` + Array.from(grouped, ([ubicacion, items]) => `
+  container.innerHTML = `${realRows.length ? '' : '<div class="notice">Ejemplos de carga. Para que sea real, cargÃ¡ la hoja EQUIPAMIENTO.</div>'}` + Array.from(grouped, ([ubicacion, items]) => `
     <section class="equipment-location">
       <h3>${escapeHtml(ubicacion)}</h3>
       <div class="table-wrap">
@@ -686,7 +686,7 @@ async function handleScheduleSubmit(event) {
   message.classList.remove('hidden');
   try {
     await postToAppsScript(payload);
-    message.textContent = 'Encuentro enviado. Tocá Actualizar Sheets en unos segundos para traer la agenda confirmada.';
+    message.textContent = 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.';
     setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
   } catch (error) {
     console.warn(error);
@@ -732,11 +732,27 @@ function findMeetingById(eventId) {
 }
 
 async function postToAppsScript(payload) {
+  if (['programar_encuentro', 'editar_encuentro', 'eliminar_encuentro'].includes(payload.action)) {
+    return sendCalendarAction(payload);
+  }
   await fetch(APPS_SCRIPT_URL, {
     method: 'POST',
     mode: 'no-cors',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload),
+  });
+}
+
+function sendCalendarAction(payload) {
+  const url = new URL(APPS_SCRIPT_URL);
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) url.searchParams.set(key, value);
+  });
+  return loadJsonp(url.toString()).then((result) => {
+    if (!result || result.ok !== true) {
+      throw new Error(result?.error || 'No se pudo guardar en Google Sheets');
+    }
+    return result;
   });
 }
 
@@ -1214,9 +1230,9 @@ async function enviarCertificado() {
   const memberValue = document.getElementById('certificateMember').value;
   const title = document.getElementById('certificateTitle').value.trim();
   const file = document.getElementById('certificateFile').files[0];
-  if (!memberValue) return alert('Seleccioná un integrante.');
-  if (!title) return alert('Completá el nombre de la capacitación.');
-  if (!file) return alert('Adjuntá el certificado.');
+  if (!memberValue) return alert('SeleccionÃ¡ un integrante.');
+  if (!title) return alert('CompletÃ¡ el nombre de la capacitaciÃ³n.');
+  if (!file) return alert('AdjuntÃ¡ el certificado.');
   setButtonLoading('sendCertificateButton', true, 'Enviando...');
   setBrigadeActionStatus('Leyendo certificado y preparando envio a Drive...');
   const dataUrl = await fileToDataUrl(file);
@@ -1356,11 +1372,11 @@ function normalizeHeader(header) {
 }
 
 function isMarked(value) {
-  return ['x', 'si', 'sí', 's', '1', 'true'].includes(normalizeState(value));
+  return ['x', 'si', 'sÃ­', 's', '1', 'true'].includes(normalizeState(value));
 }
 
 function isYes(value) {
-  return ['si', 'sí', 's', 'x', '1', 'true'].includes(normalizeState(value));
+  return ['si', 'sÃ­', 's', 'x', '1', 'true'].includes(normalizeState(value));
 }
 
 function normalizeState(value) {
@@ -1453,3 +1469,4 @@ function escapeHtml(value) {
     "'": '&#039;',
   }[char]));
 }
+
