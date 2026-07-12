@@ -186,6 +186,18 @@ function doGet(e) {
   if (action === 'read_all') {
     return webResponse_(e, readAllSheets_());
   }
+  if (action === 'programar_encuentro') {
+    const result = programarEncuentro_(e.parameter || {});
+    return webResponse_(e, { ok: true, result });
+  }
+  if (action === 'editar_encuentro') {
+    const result = editarEncuentro_(e.parameter || {});
+    return webResponse_(e, { ok: true, result });
+  }
+  if (action === 'eliminar_encuentro') {
+    const result = eliminarEncuentro_(e.parameter || {});
+    return webResponse_(e, { ok: true, result });
+  }
   return webResponse_(e, { ok: true, message: 'Brigadas activo' });
 }
 
