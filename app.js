@@ -242,6 +242,11 @@ function renderAll() {
   renderNavigation();
   renderBrigades();
   renderMembers();
+  if (!document.getElementById('brigadeDetail')?.classList.contains('hidden')) {
+    renderEquipment();
+    renderCertificates();
+    renderBibliography();
+  }
   renderCalendar();
   setupAdminFilters();
   setupScheduleOptions();
@@ -349,6 +354,9 @@ function renderMembers() {
 }
 
 function openBrigadePanel(panelId) {
+  if (panelId === 'equipmentPanel') renderEquipment();
+  if (panelId === 'certificatesPanel') renderCertificates();
+  if (panelId === 'bibliographyPanel') renderBibliography();
   document.querySelectorAll('.brigade-panel').forEach((panel) => panel.classList.toggle('active', panel.id === panelId));
   document.querySelectorAll('[data-brigade-panel]').forEach((button) => button.classList.toggle('active', button.dataset.brigadePanel === panelId));
 }
@@ -685,8 +693,10 @@ async function handleScheduleSubmit(event) {
   message.textContent = 'Encuentro agendado en pantalla. Enviando a Google Sheets...';
   message.classList.remove('hidden');
   try {
-    await postToAppsScript(payload);
-    message.textContent = 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.';
+    const result = await postToAppsScript(payload);
+    message.textContent = result?.confirmed === false
+      ? 'Encuentro enviado al Web App, pero no se pudo confirmar la escritura. Revisar la hoja ENCUENTROS.'
+      : 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.';
     setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
   } catch (error) {
     console.warn(error);
@@ -748,12 +758,23 @@ function sendCalendarAction(payload) {
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null) url.searchParams.set(key, value);
   });
-  return loadJsonp(url.toString()).then((result) => {
-    if (!result || result.ok !== true) {
-      throw new Error(result?.error || 'No se pudo guardar en Google Sheets');
-    }
-    return result;
-  });
+  return loadJsonp(url.toString())
+    .then((result) => {
+      if (!result || result.ok !== true) {
+        throw new Error(result?.error || 'No se pudo guardar en Google Sheets');
+      }
+      return { ...result, confirmed: true };
+    })
+    .catch(async (error) => {
+      console.warn('No se pudo confirmar por JSONP. Intentando POST sin confirmacion.', error);
+      await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      return { ok: true, confirmed: false };
+    });
 }
 
 function renderAlerts(summary) {
@@ -843,8 +864,19 @@ function rowBelongsToBrigade(row, brigade) {
     brigade.id_brigada,
     brigade.nombre_brigada,
     `Brigada ${brigade.nombre_brigada}`,
+    brigade.columna_personal,
+    brigade.logo_file,
   ].map(normalizeState);
-  return aliases.some((alias) => rowBrigade === alias || rowBrigade.includes(alias) || alias.includes(rowBrigade));
+  const compactRow = rowBrigade.replace(/[^a-z0-9]/g, '');
+  return aliases.some((alias) => {
+    const compactAlias = alias.replace(/[^a-z0-9]/g, '');
+    return rowBrigade === alias
+      || rowBrigade.includes(alias)
+      || alias.includes(rowBrigade)
+      || compactRow === compactAlias
+      || compactRow.includes(compactAlias)
+      || compactAlias.includes(compactRow);
+  });
 }
 
 function getBrigadasSinEncuentro(mes_periodo) {
