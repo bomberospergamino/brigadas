@@ -16,6 +16,7 @@ const BRIGADAS_CONFIG = [
 const BRIGADAS_SPREADSHEET_ID = '1ZXYNwSNQjDOsISQLcc0bNGg5qR93j0WyXaY6dvhmXlk';
 const REPORTES_DRIVE_FOLDER_ID = '1yzN-2WNhyAch4_9FX0GIv4fCeaGkSKE8';
 const UNUSED_BRIGADAS_SHEETS = ['DETALLE_CHECK_EQUIPAMIENTO', 'HISTORIAL_ACCIONES', 'ADMIN_RESUMEN'];
+const BRIGADAS_WEBAPP_VERSION = 'brigadas-calendario-confirmable-2026-07-12';
 
 const BRIGADAS_SHEETS = {
   CONFIG_BRIGADAS: ['id_brigada', 'nombre_brigada', 'columna_personal', 'logo_file', 'color', 'activa', 'orden', 'frecuencia_minima_mensual', 'responsable', 'bibliografia_url', 'observaciones'],
@@ -179,26 +180,37 @@ function logSetup_(ss, level, detail) {
 }
 
 function doGet(e) {
-  const action = e && e.parameter && e.parameter.action;
-  if (action === 'health') {
-    return webResponse_(e, { ok: true, module: 'brigadas', timestamp: new Date().toISOString() });
+  try {
+    const action = e && e.parameter && e.parameter.action;
+    if (action === 'health') {
+      return webResponse_(e, {
+        ok: true,
+        module: 'brigadas',
+        version: BRIGADAS_WEBAPP_VERSION,
+        calendar_get_actions: true,
+        actions: ['read_all', 'programar_encuentro', 'editar_encuentro', 'eliminar_encuentro'],
+        timestamp: new Date().toISOString(),
+      });
+    }
+    if (action === 'read_all') {
+      return webResponse_(e, readAllSheets_());
+    }
+    if (action === 'programar_encuentro') {
+      const result = programarEncuentro_(e.parameter || {});
+      return webResponse_(e, { ok: true, result });
+    }
+    if (action === 'editar_encuentro') {
+      const result = editarEncuentro_(e.parameter || {});
+      return webResponse_(e, { ok: true, result });
+    }
+    if (action === 'eliminar_encuentro') {
+      const result = eliminarEncuentro_(e.parameter || {});
+      return webResponse_(e, { ok: true, result });
+    }
+    return webResponse_(e, { ok: true, message: 'Brigadas activo', version: BRIGADAS_WEBAPP_VERSION });
+  } catch (error) {
+    return webResponse_(e, { ok: false, version: BRIGADAS_WEBAPP_VERSION, error: error.message || String(error) });
   }
-  if (action === 'read_all') {
-    return webResponse_(e, readAllSheets_());
-  }
-  if (action === 'programar_encuentro') {
-    const result = programarEncuentro_(e.parameter || {});
-    return webResponse_(e, { ok: true, result });
-  }
-  if (action === 'editar_encuentro') {
-    const result = editarEncuentro_(e.parameter || {});
-    return webResponse_(e, { ok: true, result });
-  }
-  if (action === 'eliminar_encuentro') {
-    const result = eliminarEncuentro_(e.parameter || {});
-    return webResponse_(e, { ok: true, result });
-  }
-  return webResponse_(e, { ok: true, message: 'Brigadas activo' });
 }
 
 function doPost(e) {
