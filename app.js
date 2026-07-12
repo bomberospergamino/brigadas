@@ -695,7 +695,7 @@ async function handleScheduleSubmit(event) {
   try {
     const result = await postToAppsScript(payload);
     message.textContent = result?.confirmed === false
-      ? 'Encuentro enviado al Web App, pero no se pudo confirmar la escritura. Revisar la hoja ENCUENTROS.'
+      ? 'Encuentro enviado sin confirmacion. Si no aparece en ENCUENTROS, falta redeployar la version confirmable del Apps Script.'
       : 'Encuentro guardado en Google Sheets. Toca Actualizar Sheets si queres confirmar la lectura.';
     setTimeout(() => document.getElementById('scheduleDialog').close(), 1200);
   } catch (error) {
@@ -758,6 +758,8 @@ function sendCalendarAction(payload) {
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null) url.searchParams.set(key, value);
   });
+  const healthUrl = new URL(APPS_SCRIPT_URL);
+  healthUrl.searchParams.set('action', 'health');
   return loadJsonp(url.toString())
     .then((result) => {
       if (!result || result.ok !== true) {
@@ -767,6 +769,14 @@ function sendCalendarAction(payload) {
     })
     .catch(async (error) => {
       console.warn('No se pudo confirmar por JSONP. Intentando POST sin confirmacion.', error);
+      try {
+        const health = await loadJsonp(healthUrl.toString());
+        if (health?.ok && health.calendar_get_actions !== true) {
+          console.warn('El Web App responde, pero parece una version anterior sin calendario confirmable.', health);
+        }
+      } catch (healthError) {
+        console.warn('No se pudo leer health del Web App.', healthError);
+      }
       await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         mode: 'no-cors',
